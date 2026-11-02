@@ -1,0 +1,6 @@
+* text=auto eol=lf
+third_party/** linguist-vendored
+third_party/** -whitespace
+*.zip binary
+*.gz binary
+*.exe binary
