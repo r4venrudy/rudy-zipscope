@@ -44,6 +44,9 @@ void local(Bytes b,Entry&e){
  auto n=u16(b,p+26),x=u16(b,p+28);if(n==0||n>4096)throw Error("LOCAL_NAME_LIMIT",p);
  e.local_name=raw(slice(b,p+30,n));auto extra=slice(b,p+30+n,x);e.local_extra.assign(extra.begin(),extra.end());extras(e.local_extra);
  e.data=p+30+n+x;slice(b,e.data,e.compressed);e.end=e.data+e.compressed;
- if(!(e.flags&8)&&(u32(b,p+14)!=e.crc||u32(b,p+18)!=e.compressed||u32(b,p+22)!=e.size))throw Error("LOCAL_SIZE_OR_CRC",p);
+ auto compressed=static_cast<std::uint64_t>(u32(b,p+18)),size=static_cast<std::uint64_t>(u32(b,p+22));
+ if(size==0xffffffff||compressed==0xffffffff){auto fields=extras(e.local_extra);if(!fields.contains(1))throw Error("LOCAL_ZIP64_MISSING",p);auto z=fields.at(1);std::uint64_t q=0;if(size==0xffffffff){size=u64(z,q);q+=8;}if(compressed==0xffffffff)compressed=u64(z,q);}
+ if(!(e.flags&8)&&(u32(b,p+14)!=e.crc||compressed!=e.compressed||size!=e.size))throw Error("LOCAL_SIZE_OR_CRC",p);
+ if((e.flags&8)&&((u32(b,p+14)!=0&&u32(b,p+14)!=e.crc)||(compressed!=0&&compressed!=e.compressed)||(size!=0&&size!=e.size)))throw Error("DESCRIPTOR_PLACEHOLDER",p);
 }
 }
