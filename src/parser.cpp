@@ -38,4 +38,12 @@ std::vector<Entry> central(Bytes b,const Directory&d,const Limits&limits){
  if(p!=end)throw Error("CENTRAL_SIZE_DISAGREEMENT",p);
  return out;
 }
+void local(Bytes b,Entry&e){
+ auto p=e.local;slice(b,p,30);if(u32(b,p)!=0x04034b50)throw Error("LOCAL_HEADER",p);
+ if(u16(b,p+4)!=e.needed||u16(b,p+6)!=e.flags||u16(b,p+8)!=e.method)throw Error("HEADER_DISAGREEMENT",p);
+ auto n=u16(b,p+26),x=u16(b,p+28);if(n==0||n>4096)throw Error("LOCAL_NAME_LIMIT",p);
+ e.local_name=raw(slice(b,p+30,n));auto extra=slice(b,p+30+n,x);e.local_extra.assign(extra.begin(),extra.end());extras(e.local_extra);
+ e.data=p+30+n+x;slice(b,e.data,e.compressed);e.end=e.data+e.compressed;
+ if(!(e.flags&8)&&(u32(b,p+14)!=e.crc||u32(b,p+18)!=e.compressed||u32(b,p+22)!=e.size))throw Error("LOCAL_SIZE_OR_CRC",p);
+}
 }
