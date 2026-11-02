@@ -72,6 +72,12 @@ Report analyze(Bytes b,const Limits&limits){
   if(b.size()>limits.input)throw Error("INPUT_LIMIT",0);
   r.directory=directory(b);r.entries=central(b,r.directory,limits);
   for(std::size_t i=0;i<r.entries.size();i++){auto&e=r.entries[i];local(b,e);descriptor(b,e);if(e.name!=e.local_name)r.findings.push_back({"NAME_DISAGREEMENT",i+1,"error"});}
+  std::vector<const Entry*> order;for(const auto&e:r.entries)order.push_back(&e);
+  std::sort(order.begin(),order.end(),[](auto a,auto c){return a->local<c->local;});std::uint64_t cursor=0;
+  for(auto e:order){if(e->local<cursor||e->end>r.directory.start)throw Error("RECORD_OVERLAP",e->local);if(e->local>cursor)r.gaps.push_back({cursor,e->local,sha256(slice(b,cursor,e->local-cursor))});cursor=e->end;}
+  if(cursor<r.directory.start)r.gaps.push_back({cursor,r.directory.start,sha256(slice(b,cursor,r.directory.start-cursor))});
+  auto central_end=r.directory.start+r.directory.size;if(central_end<r.directory.end)r.gaps.push_back({central_end,r.directory.end,sha256(slice(b,central_end,r.directory.end-central_end))});
+  if(!r.gaps.empty())r.findings.push_back({"UNREFERENCED_BYTES",0,"warning"});
   r.complete=true;
  }catch(const Error&e){r.stop_code=e.code;r.stop_offset=e.offset;}
  return r;
