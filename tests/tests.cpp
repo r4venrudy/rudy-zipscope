@@ -1,50 +1,467 @@
-#include "zipscope/model.hpp"
-#include "zipscope/bytes.hpp"
-#include "zipscope/hash.hpp"
-#include "zipscope/parser.hpp"
 #include "fixture.hpp"
-#include "zipscope/extra.hpp"
+#include "zipscope/bytes.hpp"
+#include "zipscope/compare.hpp"
 #include "zipscope/content.hpp"
+#include "zipscope/extra.hpp"
+#include "zipscope/hash.hpp"
+#include "zipscope/io.hpp"
+#include "zipscope/model.hpp"
 #include "zipscope/names.hpp"
 #include "zipscope/output.hpp"
-#include "zipscope/compare.hpp"
-#include "zipscope/io.hpp"
-#include <iostream>
-#include <cstdlib>
+#include "zipscope/parser.hpp"
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
 #include <random>
-static int checks=0;
-static void check(bool ok,const char* what){++checks;if(!ok){std::cerr<<what<<'\n';std::exit(1);}}
-struct AutoTest{explicit AutoTest(void(*fn)()){fn();}};
-#define TEST(name) static void name();static AutoTest run_##name(name);static void name()
-TEST(footer){auto b=zip();auto d=zs::directory(b);check(d.count==1&&d.start==41&&d.size==54,"EOCD boundaries");b.push_back(0);check(rejects([&]{zs::directory(b);}),"reject trailing bytes");b=zip();set16(b,b.size()-18,1);check(rejects([&]{zs::directory(b);},"MULTI_DISK"),"single disk profile");}
-TEST(zip64_footer){auto b=zip();auto old=V(b.end()-22,b.end());b.resize(b.size()-22);auto z=b.size();p32(b,0x06064b50);p32(b,44);p32(b,0);p16(b,45);p16(b,45);p32(b,0);p32(b,0);p32(b,1);p32(b,0);p32(b,1);p32(b,0);p32(b,54);p32(b,0);p32(b,41);p32(b,0);p32(b,0x07064b50);p32(b,0);p32(b,static_cast<std::uint32_t>(z));p32(b,0);p32(b,1);set16(old,8,0xffff);set16(old,10,0xffff);set32(old,12,0xffffffff);set32(old,16,0xffffffff);b.insert(b.end(),old.begin(),old.end());auto d=zs::directory(b);check(d.zip64&&d.count==1&&d.start==41,"ZIP64 end and locator");set32(b,z+48,42);check(rejects([&]{zs::directory(b);}),"ZIP64 directory cannot cross end records");}
-TEST(central_records){auto b=zip();auto d=zs::directory(b);auto e=zs::central(b,d,{});check(e.size()==1&&e[0].name=="safe.txt"&&e[0].size==3&&e[0].crc==0x352441c2,"central exact record");zs::Limits l;l.entries=0;check(rejects([&]{zs::central(b,d,l);},"ENTRY_LIMIT"),"entry budget before allocation");d.size--;check(rejects([&]{zs::central(b,d,{});}),"central bounded lengths");}
-TEST(extra_fields){zs::Entry e;e.size=0xffffffff;e.extra={1,0,8,0,3,0,0,0,0,0,0,0};zs::zip64_values(e);check(e.size==3,"ZIP64 sentinel expansion");check(rejects([]{zs::extras(V{1,0,8,0});}),"truncated extra");check(rejects([]{zs::extras(V{1,0,0,0,1,0,0,0});}),"duplicate extra ambiguity");}
-TEST(local_records){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];zs::local(b,e);check(e.data==38&&e.end==41&&e.local_name==e.name,"local record data interval");set16(b,8,8);check(rejects([&]{zs::local(b,e);},"HEADER_DISAGREEMENT"),"local method conflict");}
-TEST(local_zip64){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];set32(b,18,0xffffffff);set32(b,22,0xffffffff);set16(b,28,20);V x{1,0,16,0,3,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0};b.insert(b.begin()+38,x.begin(),x.end());zs::local(b,e);check(e.data==58&&e.end==61,"local ZIP64 resolved");b[42]=4;check(rejects([&]{zs::local(b,e);}),"ZIP64 local size mismatch");}
-TEST(data_descriptors){for(bool sign:{false,true})for(bool wide:{false,true}){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];e.flags|=8;set16(b,6,e.flags);set32(b,14,0);set32(b,18,0);set32(b,22,0);b.resize(41);if(sign)p32(b,0x08074b50);p32(b,e.crc);p32(b,3);if(wide)p32(b,0);p32(b,3);if(wide)p32(b,0);zs::local(b,e);zs::descriptor(b,e);check(e.end==b.size(),"signed/unsigned narrow/wide descriptor");}}
-TEST(two_views){auto b=zip();auto good=zs::analyze(b);check(good.complete&&good.findings.empty(),"coherent ZIP views");b[30]='X';auto r=zs::analyze(b);check(r.complete&&r.findings.size()==1&&r.findings[0].code=="NAME_DISAGREEMENT","both raw filename views preserved");check(r.entries[0].name=="safe.txt"&&r.entries[0].local_name=="Xafe.txt","no filename normalization before reconciliation");}
-TEST(record_ranges){auto b=zip();set32(b,41+20,8);set32(b,18,8);auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="RECORD_OVERLAP","data cannot overlap directory");b=zip();b.insert(b.begin(),4,0x41);set32(b,45+42,4);set32(b,b.size()-6,45);r=zs::analyze(b);check(r.complete&&r.gaps.size()==1&&r.gaps[0].begin==0&&r.gaps[0].end==4,"prefix gap identified and hashed");}
-TEST(unsupported_contract){auto b=zip();set16(b,6,0x801);set16(b,41+8,0x801);auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="UNSUPPORTED_FLAGS","encrypted input cannot look clear");b=zip();set16(b,8,99);set16(b,41+10,99);r=zs::analyze(b);check(!r.complete&&r.stop_code=="UNSUPPORTED_METHOD","unsupported compression cannot look clear");}
-TEST(raw_inflate){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];e.method=8;e.data=0;e.compressed=5;V raw{0x4b,0x4c,0x4a,0x06,0};std::uint64_t total=0;zs::payload(raw,e,{},total);check(e.verified&&e.prefix.empty()&&total==3,"raw DEFLATE decoded without retaining ordinary payloads");raw.push_back(0);e.compressed=6;check(rejects([&]{zs::payload(raw,e,{},total);},"DEFLATE_TRAILING_BYTES"),"no compressed trailing data");}
-TEST(crc_integrity){auto b=zip();b[38]='x';auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="CRC_MISMATCH"&&!r.entries[0].verified,"CRC mismatch cannot claim verified contents");b=zip();r=zs::analyze(b);check(r.entries[0].verified&&r.entries[0].sha256=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","payload identity independent of archive identity");}
-TEST(expansion_budgets){auto b=zip();zs::Limits l;l.entry=2;auto r=zs::analyze(b,l);check(!r.complete&&r.stop_code=="EXPANSION_LIMIT","per-entry decoded budget");l={};l.total=2;r=zs::analyze(b,l);check(!r.complete&&r.stop_code=="EXPANSION_LIMIT","total decoded budget");l={};l.input=1;r=zs::analyze(b,l);check(!r.complete&&r.sha256.empty()&&r.stop_code=="INPUT_LIMIT","input bounded before hashing");}
-TEST(unicode_names){check(zs::utf8("caf\xc3\xa9.txt"),"valid UTF-8");for(auto s:{std::string("\xc0\x80"),std::string("\xed\xa0\x80"),std::string("\xf4\x90\x80\x80"),std::string("bad\0name",8)})check(!zs::utf8(s),"invalid or controlled Unicode");}
-TEST(path_projection){check(zs::normalized("./folder//file")=="folder/file","dot/separator projection");check(zs::normalized("folder\\file")=="folder/file","Windows separator projection");check(zs::normalized("a/../b")=="a/../b","parent segments never resolved away");}
-TEST(escape_paths){for(auto name:{"../escape","/absolute","C:/drive","folder\\..\\escape","stream:name"}){auto r=zs::analyze(zip(name));check(r.complete&&!r.findings.empty(),"unsafe path flagged without extraction");}}
-TEST(windows_paths){for(auto name:{"AUX.txt","folder/COM1.log","trailing.","folder/file ","bad?.txt"}){auto r=zs::analyze(zip(name));check(r.complete&&r.findings.size()==1,"Windows portability evidence deduplicated across matching views");}}
-TEST(namespace_collisions){zs::Report r;zs::Entry a;a.flags=0x800;a.name=a.local_name="Folder/File";zs::Entry b=a;b.name=b.local_name="folder//file";r.entries={a,b};zs::names(r);check(r.findings.size()==2&&r.findings[0].code=="PATH_COLLISION","ASCII case and separator collisions show both records");}
-TEST(file_directory_conflicts){zs::Report r;zs::Entry a;a.flags=0x800;a.name=a.local_name="file";zs::Entry b=a;b.name=b.local_name="file/child";r.entries={a,b};zs::names(r);check(std::any_of(r.findings.begin(),r.findings.end(),[](const auto&f){return f.code=="FILE_DIRECTORY_CONFLICT";}),"ancestor file conflict");auto z=zip();set32(z,41+38,0x21a40000);auto out=zs::analyze(z);check(std::any_of(out.findings.begin(),out.findings.end(),[](const auto&f){return f.code=="SPECIAL_FILE";}),"Unix device entry flagged");}
-TEST(link_models){zs::Report r;zs::Entry a;a.flags=0x800;a.made_by=0x314;a.attrs=0xa1ff0000;a.name=a.local_name="a";a.prefix="b";a.size=1;zs::Entry b=a;b.name=b.local_name="b";b.prefix="a";r.entries={a,b};zs::names(r);check(std::count_if(r.findings.begin(),r.findings.end(),[](const auto&f){return f.code=="LINK_CYCLE";})==2,"link cycles modeled without creating links");r={};a.prefix="../escape";a.size=a.prefix.size();r.entries={a};zs::names(r);check(std::any_of(r.findings.begin(),r.findings.end(),[](const auto&f){return f.code=="LINK_TARGET_ESCAPE";}),"link target traversal");}
-TEST(unicode_extra){zs::Report r;zs::Entry e;e.name=e.local_name="safe.txt";e.flags=0x800;e.extra={0x75,0x70,8,0,1,0x6b,0x79,0xd8,0x46,'a','l','t'};r.entries={e};zs::names(r);check(!r.findings.empty(),"Unicode extra is interpreted or rejected, never silently trusted");}
-TEST(json_evidence){auto r=zs::analyze(zip("private-canary.txt"));check(zs::json(r).find("canary")==std::string::npos,"names private by default");check(zs::json(r,true).find("private-canary.txt")!=std::string::npos,"explicit name disclosure");check(zs::json(r).find("zipscope.report.v1")!=std::string::npos,"versioned report");}
-TEST(text_evidence){auto r=zs::analyze(zip());check(zs::text(r).find("verified=yes")!=std::string::npos,"terminal verification");auto bad=zs::analyze(zip("../bad"));check(zs::text(bad).find("PARENT_TRAVERSAL")!=std::string::npos,"terminal policy evidence");}
-TEST(html_evidence){auto r=zs::analyze(zip("<img>.txt"));auto h=zs::html(r,true);check(h.find("&lt;img&gt;")!=std::string::npos&&h.find("<script")==std::string::npos,"escaped static HTML");check(h.find("<svg")!=std::string::npos&&h.find("Content-Security-Policy")!=std::string::npos,"local layout and CSP");}
-TEST(sarif_evidence){auto r=zs::analyze(zip("../bad"));check(zs::sarif(r).find("PARENT_TRAVERSAL")!=std::string::npos,"SARIF rule evidence");r=zs::analyze({});check(zs::sarif(r).find("\"executionSuccessful\": false")!=std::string::npos,"incomplete SARIF execution explicit");}
-TEST(manifest_comparison){auto a=zs::analyze(zip());auto b=a;b.entries[0].method=8;check(zs::compare(a,b).equal,"compression excluded from decoded manifest");b.entries[0].attrs^=0x10000;auto c=zs::compare(a,b);check(c.comparable&&!c.equal&&c.differences[0].change=="modified","mode changes are visible");b.complete=false;c=zs::compare(a,b);check(!c.comparable&&zs::json(c).find("\"manifestEqual\": null")!=std::string::npos,"incomplete archive cannot pass comparison");}
-TEST(file_snapshot){auto p=std::filesystem::temp_directory_path()/"zipscope-owned-native-test.tmp";{std::ofstream out(p,std::ios::binary);out<<"1234";}check(rejects([&]{zs::Snapshot s(p,3);},"INPUT_LIMIT"),"file bounded before allocation");{zs::Snapshot s(p,4);check(s.bytes().size()==4,"bounded file snapshot");s.recheck();}std::filesystem::remove(p);}
-TEST(exclusive_output){auto p=std::filesystem::temp_directory_path()/"zipscope-owned-native-output.tmp";zs::write_new("first",p);check(rejects([&]{zs::write_new("second",p);},"OUTPUT_CREATE"),"existing output protected");{std::ifstream in(p);std::string value;in>>value;check(value=="first","original report preserved");}std::filesystem::remove(p);}
-TEST(malformed_and_mutated){auto original=zip();for(std::size_t i=0;i<original.size();i++){auto r=zs::analyze(zs::Bytes(original.data(),i));check(!r.complete,"every truncation must remain incomplete");check(!zs::html(r).empty(),"partial HTML remains representable");}std::mt19937 random(712783);for(unsigned trial=0;trial<2048;trial++){auto changed=original;for(unsigned i=0;i<1+trial%4;i++)changed[random()%changed.size()]^=static_cast<std::uint8_t>(1U<<(random()%8));zs::Limits limits;limits.entry=1048576;limits.total=4194304;limits.entries=64;auto r=zs::analyze(changed,limits);check(!zs::json(r).empty(),"mutation yields bounded versioned report");if(r.complete)check(std::all_of(r.entries.begin(),r.entries.end(),[](const auto&e){return e.verified;}),"complete mutation requires every payload verified");}}
-TEST(large_link_graph){zs::Report r;for(unsigned i=0;i<2000;i++){zs::Entry e;e.name=e.local_name="link-"+std::to_string(i);e.prefix=i==1999?"final":("link-"+std::to_string(i+1));e.size=e.prefix.size();e.flags=0x800;e.made_by=0x314;e.attrs=0xa1ff0000;r.entries.push_back(std::move(e));}zs::names(r);check(std::none_of(r.findings.begin(),r.findings.end(),[](const auto&f){return f.code=="LINK_CYCLE";}),"large acyclic link graph uses memoized reachability");std::vector<std::uint8_t> million(1000000,'a');check(zs::sha256(million)=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0","million-byte standard SHA vector");}
-int main(){check(zs::version()=="0.1.0-preview","version");std::vector<std::uint8_t> b{0x12,0x34,0x56,0x78};check(zs::u32(b,0)==0x78563412,"little endian");bool rejected=false;try{zs::slice(b,UINT64_MAX,2);}catch(const zs::Error&){rejected=true;}check(rejected,"overflow-safe bounds");check(zs::sha256({})=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","SHA empty");std::vector<std::uint8_t> abc{'a','b','c'};check(zs::sha256(abc)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA abc");std::cout<<"ZipScope core checks passed: "<<checks<<'\n';}
+static int checks = 0;
+static void check(bool ok, const char *what) {
+    ++checks;
+    if (!ok) {
+        std::cerr << what << '\n';
+        std::exit(1);
+    }
+}
+struct AutoTest {
+    explicit AutoTest(void (*fn)()) {
+        fn();
+    }
+};
+#define TEST(name)                                                                                 \
+    static void name();                                                                            \
+    static AutoTest run_##name(name);                                                              \
+    static void name()
+TEST(footer) {
+    auto b = zip();
+    auto d = zs::directory(b);
+    check(d.count == 1 && d.start == 41 && d.size == 54, "EOCD boundaries");
+    b.push_back(0);
+    check(rejects([&] { zs::directory(b); }), "reject trailing bytes");
+    b = zip();
+    set16(b, b.size() - 18, 1);
+    check(rejects([&] { zs::directory(b); }, "MULTI_DISK"), "single disk profile");
+}
+TEST(zip64_footer) {
+    auto b = zip();
+    auto old = V(b.end() - 22, b.end());
+    b.resize(b.size() - 22);
+    auto z = b.size();
+    p32(b, 0x06064b50);
+    p32(b, 44);
+    p32(b, 0);
+    p16(b, 45);
+    p16(b, 45);
+    p32(b, 0);
+    p32(b, 0);
+    p32(b, 1);
+    p32(b, 0);
+    p32(b, 1);
+    p32(b, 0);
+    p32(b, 54);
+    p32(b, 0);
+    p32(b, 41);
+    p32(b, 0);
+    p32(b, 0x07064b50);
+    p32(b, 0);
+    p32(b, static_cast<std::uint32_t>(z));
+    p32(b, 0);
+    p32(b, 1);
+    set16(old, 8, 0xffff);
+    set16(old, 10, 0xffff);
+    set32(old, 12, 0xffffffff);
+    set32(old, 16, 0xffffffff);
+    b.insert(b.end(), old.begin(), old.end());
+    auto d = zs::directory(b);
+    check(d.zip64 && d.count == 1 && d.start == 41, "ZIP64 end and locator");
+    set32(b, z + 48, 42);
+    check(rejects([&] { zs::directory(b); }), "ZIP64 directory cannot cross end records");
+}
+TEST(central_records) {
+    auto b = zip();
+    auto d = zs::directory(b);
+    auto e = zs::central(b, d, {});
+    check(e.size() == 1 && e[0].name == "safe.txt" && e[0].size == 3 && e[0].crc == 0x352441c2,
+          "central exact record");
+    zs::Limits l;
+    l.entries = 0;
+    check(rejects([&] { zs::central(b, d, l); }, "ENTRY_LIMIT"), "entry budget before allocation");
+    d.size--;
+    check(rejects([&] { zs::central(b, d, {}); }), "central bounded lengths");
+}
+TEST(extra_fields) {
+    zs::Entry e;
+    e.size = 0xffffffff;
+    e.extra = {1, 0, 8, 0, 3, 0, 0, 0, 0, 0, 0, 0};
+    zs::zip64_values(e);
+    check(e.size == 3, "ZIP64 sentinel expansion");
+    check(rejects([] { zs::extras(V{1, 0, 8, 0}); }), "truncated extra");
+    check(rejects([] { zs::extras(V{1, 0, 0, 0, 1, 0, 0, 0}); }), "duplicate extra ambiguity");
+}
+TEST(local_records) {
+    auto b = zip();
+    auto e = zs::central(b, zs::directory(b), {})[0];
+    zs::local(b, e);
+    check(e.data == 38 && e.end == 41 && e.local_name == e.name, "local record data interval");
+    set16(b, 8, 8);
+    check(rejects([&] { zs::local(b, e); }, "HEADER_DISAGREEMENT"), "local method conflict");
+}
+TEST(local_zip64) {
+    auto b = zip();
+    auto e = zs::central(b, zs::directory(b), {})[0];
+    set32(b, 18, 0xffffffff);
+    set32(b, 22, 0xffffffff);
+    set16(b, 28, 20);
+    V x{1, 0, 16, 0, 3, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0};
+    b.insert(b.begin() + 38, x.begin(), x.end());
+    zs::local(b, e);
+    check(e.data == 58 && e.end == 61, "local ZIP64 resolved");
+    b[42] = 4;
+    check(rejects([&] { zs::local(b, e); }), "ZIP64 local size mismatch");
+}
+TEST(data_descriptors) {
+    for (bool sign : {false, true})
+        for (bool wide : {false, true}) {
+            auto b = zip();
+            auto e = zs::central(b, zs::directory(b), {})[0];
+            e.flags |= 8;
+            set16(b, 6, e.flags);
+            set32(b, 14, 0);
+            set32(b, 18, 0);
+            set32(b, 22, 0);
+            b.resize(41);
+            if (sign)
+                p32(b, 0x08074b50);
+            p32(b, e.crc);
+            p32(b, 3);
+            if (wide)
+                p32(b, 0);
+            p32(b, 3);
+            if (wide)
+                p32(b, 0);
+            zs::local(b, e);
+            zs::descriptor(b, e);
+            check(e.end == b.size(), "signed/unsigned narrow/wide descriptor");
+        }
+}
+TEST(two_views) {
+    auto b = zip();
+    auto good = zs::analyze(b);
+    check(good.complete && good.findings.empty(), "coherent ZIP views");
+    b[30] = 'X';
+    auto r = zs::analyze(b);
+    check(r.complete && r.findings.size() == 1 && r.findings[0].code == "NAME_DISAGREEMENT",
+          "both raw filename views preserved");
+    check(r.entries[0].name == "safe.txt" && r.entries[0].local_name == "Xafe.txt",
+          "no filename normalization before reconciliation");
+}
+TEST(record_ranges) {
+    auto b = zip();
+    set32(b, 41 + 20, 8);
+    set32(b, 18, 8);
+    auto r = zs::analyze(b);
+    check(!r.complete && r.stop_code == "RECORD_OVERLAP", "data cannot overlap directory");
+    b = zip();
+    b.insert(b.begin(), 4, 0x41);
+    set32(b, 45 + 42, 4);
+    set32(b, b.size() - 6, 45);
+    r = zs::analyze(b);
+    check(r.complete && r.gaps.size() == 1 && r.gaps[0].begin == 0 && r.gaps[0].end == 4,
+          "prefix gap identified and hashed");
+}
+TEST(unsupported_contract) {
+    auto b = zip();
+    set16(b, 6, 0x801);
+    set16(b, 41 + 8, 0x801);
+    auto r = zs::analyze(b);
+    check(!r.complete && r.stop_code == "UNSUPPORTED_FLAGS", "encrypted input cannot look clear");
+    b = zip();
+    set16(b, 8, 99);
+    set16(b, 41 + 10, 99);
+    r = zs::analyze(b);
+    check(!r.complete && r.stop_code == "UNSUPPORTED_METHOD",
+          "unsupported compression cannot look clear");
+}
+TEST(raw_inflate) {
+    auto b = zip();
+    auto e = zs::central(b, zs::directory(b), {})[0];
+    e.method = 8;
+    e.data = 0;
+    e.compressed = 5;
+    V raw{0x4b, 0x4c, 0x4a, 0x06, 0};
+    std::uint64_t total = 0;
+    zs::payload(raw, e, {}, total);
+    check(e.verified && e.prefix.empty() && total == 3,
+          "raw DEFLATE decoded without retaining ordinary payloads");
+    raw.push_back(0);
+    e.compressed = 6;
+    check(rejects([&] { zs::payload(raw, e, {}, total); }, "DEFLATE_TRAILING_BYTES"),
+          "no compressed trailing data");
+}
+TEST(crc_integrity) {
+    auto b = zip();
+    b[38] = 'x';
+    auto r = zs::analyze(b);
+    check(!r.complete && r.stop_code == "CRC_MISMATCH" && !r.entries[0].verified,
+          "CRC mismatch cannot claim verified contents");
+    b = zip();
+    r = zs::analyze(b);
+    check(r.entries[0].verified &&
+              r.entries[0].sha256 ==
+                  "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "payload identity independent of archive identity");
+}
+TEST(expansion_budgets) {
+    auto b = zip();
+    zs::Limits l;
+    l.entry = 2;
+    auto r = zs::analyze(b, l);
+    check(!r.complete && r.stop_code == "EXPANSION_LIMIT", "per-entry decoded budget");
+    l = {};
+    l.total = 2;
+    r = zs::analyze(b, l);
+    check(!r.complete && r.stop_code == "EXPANSION_LIMIT", "total decoded budget");
+    l = {};
+    l.input = 1;
+    r = zs::analyze(b, l);
+    check(!r.complete && r.sha256.empty() && r.stop_code == "INPUT_LIMIT",
+          "input bounded before hashing");
+}
+TEST(unicode_names) {
+    check(zs::utf8("caf\xc3\xa9.txt"), "valid UTF-8");
+    for (auto s : {std::string("\xc0\x80"), std::string("\xed\xa0\x80"),
+                   std::string("\xf4\x90\x80\x80"), std::string("bad\0name", 8)})
+        check(!zs::utf8(s), "invalid or controlled Unicode");
+}
+TEST(path_projection) {
+    check(zs::normalized("./folder//file") == "folder/file", "dot/separator projection");
+    check(zs::normalized("folder\\file") == "folder/file", "Windows separator projection");
+    check(zs::normalized("a/../b") == "a/../b", "parent segments never resolved away");
+}
+TEST(escape_paths) {
+    for (auto name : {"../escape", "/absolute", "C:/drive", "folder\\..\\escape", "stream:name"}) {
+        auto r = zs::analyze(zip(name));
+        check(r.complete && !r.findings.empty(), "unsafe path flagged without extraction");
+    }
+}
+TEST(windows_paths) {
+    for (auto name : {"AUX.txt", "folder/COM1.log", "trailing.", "folder/file ", "bad?.txt"}) {
+        auto r = zs::analyze(zip(name));
+        check(r.complete && r.findings.size() == 1,
+              "Windows portability evidence deduplicated across matching views");
+    }
+}
+TEST(namespace_collisions) {
+    zs::Report r;
+    zs::Entry a;
+    a.flags = 0x800;
+    a.name = a.local_name = "Folder/File";
+    zs::Entry b = a;
+    b.name = b.local_name = "folder//file";
+    r.entries = {a, b};
+    zs::names(r);
+    check(r.findings.size() == 2 && r.findings[0].code == "PATH_COLLISION",
+          "ASCII case and separator collisions show both records");
+}
+TEST(file_directory_conflicts) {
+    zs::Report r;
+    zs::Entry a;
+    a.flags = 0x800;
+    a.name = a.local_name = "file";
+    zs::Entry b = a;
+    b.name = b.local_name = "file/child";
+    r.entries = {a, b};
+    zs::names(r);
+    check(std::any_of(r.findings.begin(), r.findings.end(),
+                      [](const auto &f) { return f.code == "FILE_DIRECTORY_CONFLICT"; }),
+          "ancestor file conflict");
+    auto z = zip();
+    set32(z, 41 + 38, 0x21a40000);
+    auto out = zs::analyze(z);
+    check(std::any_of(out.findings.begin(), out.findings.end(),
+                      [](const auto &f) { return f.code == "SPECIAL_FILE"; }),
+          "Unix device entry flagged");
+}
+TEST(link_models) {
+    zs::Report r;
+    zs::Entry a;
+    a.flags = 0x800;
+    a.made_by = 0x314;
+    a.attrs = 0xa1ff0000;
+    a.name = a.local_name = "a";
+    a.prefix = "b";
+    a.size = 1;
+    zs::Entry b = a;
+    b.name = b.local_name = "b";
+    b.prefix = "a";
+    r.entries = {a, b};
+    zs::names(r);
+    check(std::count_if(r.findings.begin(), r.findings.end(),
+                        [](const auto &f) { return f.code == "LINK_CYCLE"; }) == 2,
+          "link cycles modeled without creating links");
+    r = {};
+    a.prefix = "../escape";
+    a.size = a.prefix.size();
+    r.entries = {a};
+    zs::names(r);
+    check(std::any_of(r.findings.begin(), r.findings.end(),
+                      [](const auto &f) { return f.code == "LINK_TARGET_ESCAPE"; }),
+          "link target traversal");
+}
+TEST(unicode_extra) {
+    zs::Report r;
+    zs::Entry e;
+    e.name = e.local_name = "safe.txt";
+    e.flags = 0x800;
+    e.extra = {0x75, 0x70, 8, 0, 1, 0x6b, 0x79, 0xd8, 0x46, 'a', 'l', 't'};
+    r.entries = {e};
+    zs::names(r);
+    check(!r.findings.empty(), "Unicode extra is interpreted or rejected, never silently trusted");
+}
+TEST(json_evidence) {
+    auto r = zs::analyze(zip("private-canary.txt"));
+    check(zs::json(r).find("canary") == std::string::npos, "names private by default");
+    check(zs::json(r, true).find("private-canary.txt") != std::string::npos,
+          "explicit name disclosure");
+    check(zs::json(r).find("zipscope.report.v1") != std::string::npos, "versioned report");
+}
+TEST(text_evidence) {
+    auto r = zs::analyze(zip());
+    check(zs::text(r).find("verified=yes") != std::string::npos, "terminal verification");
+    auto bad = zs::analyze(zip("../bad"));
+    check(zs::text(bad).find("PARENT_TRAVERSAL") != std::string::npos, "terminal policy evidence");
+}
+TEST(html_evidence) {
+    auto r = zs::analyze(zip("<img>.txt"));
+    auto h = zs::html(r, true);
+    check(h.find("&lt;img&gt;") != std::string::npos && h.find("<script") == std::string::npos,
+          "escaped static HTML");
+    check(h.find("<svg") != std::string::npos &&
+              h.find("Content-Security-Policy") != std::string::npos,
+          "local layout and CSP");
+}
+TEST(sarif_evidence) {
+    auto r = zs::analyze(zip("../bad"));
+    check(zs::sarif(r).find("PARENT_TRAVERSAL") != std::string::npos, "SARIF rule evidence");
+    r = zs::analyze({});
+    check(zs::sarif(r).find("\"executionSuccessful\": false") != std::string::npos,
+          "incomplete SARIF execution explicit");
+}
+TEST(manifest_comparison) {
+    auto a = zs::analyze(zip());
+    auto b = a;
+    b.entries[0].method = 8;
+    check(zs::compare(a, b).equal, "compression excluded from decoded manifest");
+    b.entries[0].attrs ^= 0x10000;
+    auto c = zs::compare(a, b);
+    check(c.comparable && !c.equal && c.differences[0].change == "modified",
+          "mode changes are visible");
+    b.complete = false;
+    c = zs::compare(a, b);
+    check(!c.comparable && zs::json(c).find("\"manifestEqual\": null") != std::string::npos,
+          "incomplete archive cannot pass comparison");
+}
+TEST(file_snapshot) {
+    auto p = std::filesystem::temp_directory_path() / "zipscope-owned-native-test.tmp";
+    {
+        std::ofstream out(p, std::ios::binary);
+        out << "1234";
+    }
+    check(rejects([&] { zs::Snapshot s(p, 3); }, "INPUT_LIMIT"), "file bounded before allocation");
+    {
+        zs::Snapshot s(p, 4);
+        check(s.bytes().size() == 4, "bounded file snapshot");
+        s.recheck();
+    }
+    std::filesystem::remove(p);
+}
+TEST(exclusive_output) {
+    auto p = std::filesystem::temp_directory_path() / "zipscope-owned-native-output.tmp";
+    zs::write_new("first", p);
+    check(rejects([&] { zs::write_new("second", p); }, "OUTPUT_CREATE"),
+          "existing output protected");
+    {
+        std::ifstream in(p);
+        std::string value;
+        in >> value;
+        check(value == "first", "original report preserved");
+    }
+    std::filesystem::remove(p);
+}
+TEST(malformed_and_mutated) {
+    auto original = zip();
+    for (std::size_t i = 0; i < original.size(); i++) {
+        auto r = zs::analyze(zs::Bytes(original.data(), i));
+        check(!r.complete, "every truncation must remain incomplete");
+        check(!zs::html(r).empty(), "partial HTML remains representable");
+    }
+    std::mt19937 random(712783);
+    for (unsigned trial = 0; trial < 2048; trial++) {
+        auto changed = original;
+        for (unsigned i = 0; i < 1 + trial % 4; i++)
+            changed[random() % changed.size()] ^= static_cast<std::uint8_t>(1U << (random() % 8));
+        zs::Limits limits;
+        limits.entry = 1048576;
+        limits.total = 4194304;
+        limits.entries = 64;
+        auto r = zs::analyze(changed, limits);
+        check(!zs::json(r).empty(), "mutation yields bounded versioned report");
+        if (r.complete)
+            check(std::all_of(r.entries.begin(), r.entries.end(),
+                              [](const auto &e) { return e.verified; }),
+                  "complete mutation requires every payload verified");
+    }
+}
+TEST(large_link_graph) {
+    zs::Report r;
+    for (unsigned i = 0; i < 2000; i++) {
+        zs::Entry e;
+        e.name = e.local_name = "link-" + std::to_string(i);
+        e.prefix = i == 1999 ? "final" : ("link-" + std::to_string(i + 1));
+        e.size = e.prefix.size();
+        e.flags = 0x800;
+        e.made_by = 0x314;
+        e.attrs = 0xa1ff0000;
+        r.entries.push_back(std::move(e));
+    }
+    zs::names(r);
+    check(std::none_of(r.findings.begin(), r.findings.end(),
+                       [](const auto &f) { return f.code == "LINK_CYCLE"; }),
+          "large acyclic link graph uses memoized reachability");
+    std::vector<std::uint8_t> million(1000000, 'a');
+    check(zs::sha256(million) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+          "million-byte standard SHA vector");
+}
+TEST(unicode_alternative_contract) {
+    zs::Report r;
+    zs::Entry e;
+    e.name = e.local_name = "plain";
+    std::string value = "caf\xc3\xa9";
+    V extra;
+    p16(extra, 0x7075);
+    p16(extra, static_cast<std::uint16_t>(5 + value.size()));
+    extra.push_back(1);
+    p32(extra, 0x192062cf);
+    extra.insert(extra.end(), value.begin(), value.end());
+    e.extra = extra;
+    r.entries = {e};
+    zs::names(r);
+    check(r.entries[0].aliases.size() == 1,
+          "UTF-8 override interpreted independently of legacy flag");
+}
+int main() {
+    check(zs::version() == "0.1.0-preview", "version");
+    std::vector<std::uint8_t> b{0x12, 0x34, 0x56, 0x78};
+    check(zs::u32(b, 0) == 0x78563412, "little endian");
+    bool rejected = false;
+    try {
+        zs::slice(b, UINT64_MAX, 2);
+    } catch (const zs::Error &) {
+        rejected = true;
+    }
+    check(rejected, "overflow-safe bounds");
+    check(zs::sha256({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "SHA empty");
+    std::vector<std::uint8_t> abc{'a', 'b', 'c'};
+    check(zs::sha256(abc) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "SHA abc");
+    std::cout << "ZipScope core checks passed: " << checks << '\n';
+}

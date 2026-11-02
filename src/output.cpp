@@ -1,41 +1,241 @@
 #include "zipscope/output.hpp"
+#include "nlohmann/json.hpp"
+#include "zipscope/compare.hpp"
 #include "zipscope/hash.hpp"
 #include "zipscope/names.hpp"
-#include "zipscope/compare.hpp"
-#include "nlohmann/json.hpp"
-#include <sstream>
 #include <set>
+#include <sstream>
 namespace zs {
-using J=nlohmann::ordered_json;
-static std::string identity(const std::string&s){return sha256(Bytes(reinterpret_cast<const std::uint8_t*>(s.data()),s.size()));}
-static J name_evidence(const std::string&s,bool show){J out{{"sha256",identity(s)}};if(show){if(utf8(s))out["value"]=s;else{std::string hex;constexpr char digits[]="0123456789abcdef";for(char raw:s){auto c=static_cast<unsigned char>(raw);hex+=digits[c>>4];hex+=digits[c&15];}out["rawHex"]=hex;}}return out;}
-std::string json(const Report&r,bool show){
- J entries=J::array(),findings=J::array(),gaps=J::array();
- for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.entries[i];J aliases=J::array();for(const auto&name:e.aliases)aliases.push_back(name_evidence(name,show));entries.push_back(J{{"number",i+1},{"centralName",name_evidence(e.name,show)},{"localName",name_evidence(e.local_name,show)},{"unicodeNames",aliases},{"method",e.method},{"flags",e.flags},{"attributes",e.attrs},{"localOffset",e.local},{"dataOffset",e.data},{"recordEnd",e.end},{"compressedBytes",e.compressed},{"decodedBytes",e.size},{"crc32",e.crc},{"verified",e.verified},{"decodedSha256",e.sha256.empty()?J(nullptr):J(e.sha256)},{"directory",e.directory},{"symlink",e.symlink}});}
- for(const auto&f:r.findings)findings.push_back(J{{"code",f.code},{"entry",f.entry},{"severity",f.severity}});
- for(const auto&g:r.gaps)gaps.push_back(J{{"begin",g.begin},{"end",g.end},{"sha256",g.sha256}});
- J out{{"schema","zipscope.report.v1"},{"version",version()},{"sourceSha256",r.sha256},{"sourceBytes",r.source_size},{"complete",r.complete},{"stopCode",r.stop_code.empty()?J(nullptr):J(r.stop_code)},{"stopOffset",r.stop_code.empty()?J(nullptr):J(r.stop_offset)},{"directory",J{{"offset",r.directory.start},{"bytes",r.directory.size},{"entries",r.directory.count},{"zip64",r.directory.zip64},{"eocdOffset",r.directory.eocd}}},{"entries",entries},{"findings",findings},{"unreferencedRanges",gaps}};
- return out.dump(2,' ',false,J::error_handler_t::replace)+"\n";
+using J = nlohmann::ordered_json;
+static std::string identity(const std::string &s) {
+    return sha256(Bytes(reinterpret_cast<const std::uint8_t *>(s.data()), s.size()));
 }
-std::string text(const Report&r,bool show){std::ostringstream out;out.imbue(std::locale::classic());out<<"RUDY ZIPSCOPE / "<<(r.complete?"COMPLETE PROFILE":"INCOMPLETE")<<"\nSource SHA-256: "<<r.sha256<<"\nEntries: "<<r.entries.size()<<" | Findings: "<<r.findings.size()<<"\n";if(!r.stop_code.empty())out<<"Stopped: "<<r.stop_code<<" at byte "<<r.stop_offset<<"\n";for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.entries[i];out<<'#'<<i+1<<" ["<<e.local<<','<<e.end<<") method="<<e.method<<" bytes="<<e.size<<" verified="<<(e.verified?"yes":"no")<<" name-sha256="<<identity(e.name);if(show&&utf8(e.name))out<<" name="<<e.name;out<<'\n';}for(const auto&f:r.findings)out<<f.severity<<" / #"<<f.entry<<" / "<<f.code<<'\n';return out.str();}
-static std::string escape(const std::string&s){std::string out;for(char c:s){switch(c){case '&':out+="&amp;";break;case '<':out+="&lt;";break;case '>':out+="&gt;";break;case '"':out+="&quot;";break;case '\'':out+="&#39;";break;default:out+=c;}}return out;}
-std::string html(const Report&r,bool show){
- std::ostringstream o;o.imbue(std::locale::classic());o<<"<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\"><title>Rudy ZipScope investigation</title><style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#090f17;color:#edf6ff;font:15px/1.7 system-ui,sans-serif}main{max-width:1200px;margin:40px auto;padding:24px}header{border-left:4px solid #55e0b6;background:#101e2b;padding:28px;border-radius:10px}h1{font-size:46px;line-height:1.1}small,h2{color:#55e0b6}p{color:#a5b8cd}.cards{display:flex;gap:16px;flex-wrap:wrap;margin:24px 0}.card{flex:1;min-width:180px;background:#101b28;border:1px solid #293e52;border-radius:10px;padding:20px}.value{color:#55e0b6;font-size:32px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%}td,th{padding:12px;border-bottom:1px solid #293e52;text-align:left}code{font:12px monospace;overflow-wrap:anywhere}details{padding:20px;border:1px solid #293e52;border-radius:10px;margin:24px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace}svg{width:100%;min-width:800px;background:#101b28;border-radius:10px}text{font:12px monospace;fill:#a5b8cd}footer{border-top:1px solid #293e52;padding-top:20px;color:#a5b8cd}</style><main><header><small>RUDY SYSTEMS / ARCHIVE INVESTIGATION</small><h1>ZipScope</h1><p>"<<(r.complete?"Supported profile completed":"Analysis incomplete")<<" · No files extracted</p><p>"<<escape(r.stop_code)<<"</p></header><div class=\"cards\">";
- for(auto card:std::vector<std::pair<std::string,std::uint64_t>>{{"Source bytes",r.source_size},{"Entries",r.entries.size()},{"Findings",r.findings.size()},{"Unreferenced ranges",r.gaps.size()}})o<<"<div class=\"card\">"<<card.first<<"<div class=\"value\">"<<card.second<<"</div></div>";
- o<<"</div><h2>Byte layout</h2><p>Green spans are referenced local records; amber spans are unreferenced ranges. The directory follows the data records.</p><div class=\"scroll\"><svg role=\"img\" aria-label=\"ZIP local record and unreferenced byte ranges\" viewBox=\"0 0 1100 110\">";auto scale=1000.0L/static_cast<long double>(std::max<std::uint64_t>(1,r.source_size));
- for(const auto&e:r.entries)if(e.end>=e.local&&e.end<=r.source_size)o<<"<rect x=\""<<50+e.local*scale<<"\" y=\"30\" width=\""<<std::max(1.0L,(e.end-e.local)*scale)<<"\" height=\"24\" fill=\"#55e0b6\"/>";
- for(const auto&g:r.gaps)o<<"<rect x=\""<<50+g.begin*scale<<"\" y=\"68\" width=\""<<std::max(1.0L,(g.end-g.begin)*scale)<<"\" height=\"16\" fill=\"#f7ba69\"/>";
- o<<"</svg></div><h2>Verified entry evidence</h2><div class=\"scroll\"><table><tr><th>Entry</th><th>Name identity</th><th>Local → end</th><th>Decoded bytes</th><th>Integrity</th></tr>";
- for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.entries[i];o<<"<tr><td>#"<<i+1<<"</td><td><code>"<<(show&&utf8(e.name)?escape(e.name):identity(e.name))<<"</code></td><td>"<<e.local<<" → "<<e.end<<"</td><td>"<<e.size<<"</td><td>"<<(e.verified?"Verified":"Unverified")<<"</td></tr>";}
- o<<"</table></div><h2>Policy observations</h2>";for(const auto&f:r.findings)o<<"<p>#"<<f.entry<<" / "<<escape(f.severity)<<" / "<<escape(f.code)<<"</p>";
- o<<"<details><summary>Structured evidence</summary><pre>"<<escape(json(r,show))<<"</pre></details><footer>Developer preview. Conclusions apply to the documented ZIP profile, not every extractor or destination filesystem. Hashes, sizes and structure can identify data. Source SHA-256: <code>"<<r.sha256<<"</code></footer></main></html>\n";return o.str();
+static J name_evidence(const std::string &s, bool show) {
+    J out{{"sha256", identity(s)}};
+    if (show) {
+        if (utf8(s))
+            out["value"] = s;
+        else {
+            std::string hex;
+            constexpr char digits[] = "0123456789abcdef";
+            for (char raw : s) {
+                auto c = static_cast<unsigned char>(raw);
+                hex += digits[c >> 4];
+                hex += digits[c & 15];
+            }
+            out["rawHex"] = hex;
+        }
+    }
+    return out;
 }
-std::string sarif(const Report&r,bool show){
- J results=J::array(),rules=J::array();std::set<std::string> seen;
- for(const auto&f:r.findings){if(seen.insert(f.code).second)rules.push_back(J{{"id",f.code},{"shortDescription",J{{"text",f.code}}}});J properties{{"entry",f.entry}};if(show&&f.entry>0&&f.entry<=r.entries.size())properties["nameEvidence"]=name_evidence(r.entries[f.entry-1].name,true);results.push_back(J{{"ruleId",f.code},{"level",f.severity=="error"?"error":"warning"},{"message",J{{"text",f.code+"; entry "+std::to_string(f.entry)+". Review the documented portable ZIP profile."}}},{"properties",properties}});}
- J invocation{{"executionSuccessful",r.complete}};if(!r.complete)invocation["toolExecutionNotifications"]=J::array({J{{"level","error"},{"message",J{{"text","Analysis incomplete: "+r.stop_code}}}}});
- J run{{"tool",J{{"driver",J{{"name","Rudy ZipScope"},{"version",version()},{"informationUri","https://github.com/r4venrudy/rudy-zipscope"},{"rules",rules}}}}},{"invocations",J::array({invocation})},{"results",results},{"properties",J{{"sourceSha256",r.sha256},{"complete",r.complete},{"profile","zipscope.v1"}}}};
- return J{{"$schema","https://json.schemastore.org/sarif-2.1.0.json"},{"version","2.1.0"},{"runs",J::array({run})}}.dump(2,' ',false,J::error_handler_t::replace)+"\n";
+std::string json(const Report &r, bool show) {
+    J entries = J::array(), findings = J::array(), gaps = J::array();
+    for (std::size_t i = 0; i < r.entries.size(); i++) {
+        const auto &e = r.entries[i];
+        J aliases = J::array();
+        for (const auto &name : e.aliases)
+            aliases.push_back(name_evidence(name, show));
+        entries.push_back(J{{"number", i + 1},
+                            {"centralName", name_evidence(e.name, show)},
+                            {"localName", name_evidence(e.local_name, show)},
+                            {"unicodeNames", aliases},
+                            {"method", e.method},
+                            {"flags", e.flags},
+                            {"attributes", e.attrs},
+                            {"localOffset", e.local},
+                            {"dataOffset", e.data},
+                            {"recordEnd", e.end},
+                            {"compressedBytes", e.compressed},
+                            {"decodedBytes", e.size},
+                            {"crc32", e.crc},
+                            {"verified", e.verified},
+                            {"decodedSha256", e.sha256.empty() ? J(nullptr) : J(e.sha256)},
+                            {"directory", e.directory},
+                            {"symlink", e.symlink}});
+    }
+    for (const auto &f : r.findings)
+        findings.push_back(J{{"code", f.code}, {"entry", f.entry}, {"severity", f.severity}});
+    for (const auto &g : r.gaps)
+        gaps.push_back(J{{"begin", g.begin}, {"end", g.end}, {"sha256", g.sha256}});
+    J out{{"schema", "zipscope.report.v1"},
+          {"version", version()},
+          {"sourceSha256", r.sha256},
+          {"sourceBytes", r.source_size},
+          {"complete", r.complete},
+          {"stopCode", r.stop_code.empty() ? J(nullptr) : J(r.stop_code)},
+          {"stopOffset", r.stop_code.empty() ? J(nullptr) : J(r.stop_offset)},
+          {"directory", J{{"offset", r.directory.start},
+                          {"bytes", r.directory.size},
+                          {"entries", r.directory.count},
+                          {"zip64", r.directory.zip64},
+                          {"eocdOffset", r.directory.eocd}}},
+          {"entries", entries},
+          {"findings", findings},
+          {"unreferencedRanges", gaps}};
+    return out.dump(2, ' ', false, J::error_handler_t::replace) + "\n";
 }
-std::string json(const Comparison&c,bool show){J changes=J::array();for(const auto&d:c.differences)changes.push_back(J{{"name",name_evidence(d.name,show)},{"change",d.change},{"beforeProjection",d.before.empty()?J(nullptr):J(d.before)},{"afterProjection",d.after.empty()?J(nullptr):J(d.after)}});return J{{"schema","zipscope.compare.v1"},{"version",version()},{"comparable",c.comparable},{"manifestEqual",c.comparable?J(c.equal):J(nullptr)},{"beforeSourceSha256",c.before},{"afterSourceSha256",c.after},{"differences",changes}}.dump(2,' ',false,J::error_handler_t::replace)+"\n";}
+std::string text(const Report &r, bool show) {
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << "RUDY ZIPSCOPE / " << (r.complete ? "COMPLETE PROFILE" : "INCOMPLETE")
+        << "\nSource SHA-256: " << r.sha256 << "\nEntries: " << r.entries.size()
+        << " | Findings: " << r.findings.size() << "\n";
+    if (!r.stop_code.empty())
+        out << "Stopped: " << r.stop_code << " at byte " << r.stop_offset << "\n";
+    for (std::size_t i = 0; i < r.entries.size(); i++) {
+        const auto &e = r.entries[i];
+        out << '#' << i + 1 << " [" << e.local << ',' << e.end << ") method=" << e.method
+            << " bytes=" << e.size << " verified=" << (e.verified ? "yes" : "no")
+            << " name-sha256=" << identity(e.name);
+        if (show && utf8(e.name))
+            out << " name=" << e.name;
+        out << '\n';
+    }
+    for (const auto &f : r.findings)
+        out << f.severity << " / #" << f.entry << " / " << f.code << '\n';
+    return out.str();
 }
+static std::string escape(const std::string &s) {
+    std::string out;
+    for (char c : s) {
+        switch (c) {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        case '\'':
+            out += "&#39;";
+            break;
+        default:
+            out += c;
+        }
+    }
+    return out;
+}
+std::string html(const Report &r, bool show) {
+    std::ostringstream o;
+    o.imbue(std::locale::classic());
+    o << "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" "
+         "content=\"width=device-width,initial-scale=1\"><meta "
+         "http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src "
+         "'unsafe-inline'; base-uri 'none'; form-action 'none'\"><title>Rudy ZipScope "
+         "investigation</"
+         "title><style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#"
+         "090f17;color:#edf6ff;font:15px/1.7 "
+         "system-ui,sans-serif}main{max-width:1200px;margin:40px "
+         "auto;padding:24px}header{border-left:4px solid "
+         "#55e0b6;background:#101e2b;padding:28px;border-radius:10px}h1{font-size:46px;line-height:"
+         "1.1}small,h2{color:#55e0b6}p{color:#a5b8cd}.cards{display:flex;gap:16px;flex-wrap:wrap;"
+         "margin:24px 0}.card{flex:1;min-width:180px;background:#101b28;border:1px solid "
+         "#293e52;border-radius:10px;padding:20px}.value{color:#55e0b6;font-size:32px}.scroll{"
+         "overflow:auto}table{border-collapse:collapse;width:100%}td,th{padding:12px;border-bottom:"
+         "1px solid #293e52;text-align:left}code{font:12px "
+         "monospace;overflow-wrap:anywhere}details{padding:20px;border:1px solid "
+         "#293e52;border-radius:10px;margin:24px "
+         "0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 "
+         "monospace}svg{width:100%;min-width:800px;background:#101b28;border-radius:10px}text{font:"
+         "12px monospace;fill:#a5b8cd}footer{border-top:1px solid "
+         "#293e52;padding-top:20px;color:#a5b8cd}</style><main><header><small>RUDY SYSTEMS / "
+         "ARCHIVE INVESTIGATION</small><h1>ZipScope</h1><p>"
+      << (r.complete ? "Supported profile completed" : "Analysis incomplete")
+      << " · No files extracted</p><p>" << escape(r.stop_code)
+      << "</p></header><div class=\"cards\">";
+    for (auto card :
+         std::vector<std::pair<std::string, std::uint64_t>>{{"Source bytes", r.source_size},
+                                                            {"Entries", r.entries.size()},
+                                                            {"Findings", r.findings.size()},
+                                                            {"Unreferenced ranges", r.gaps.size()}})
+        o << "<div class=\"card\">" << card.first << "<div class=\"value\">" << card.second
+          << "</div></div>";
+    o << "</div><h2>Byte layout</h2><p>Green spans are referenced local records; amber spans are "
+         "unreferenced ranges. The directory follows the data records.</p><div "
+         "class=\"scroll\"><svg role=\"img\" aria-label=\"ZIP local record and unreferenced byte "
+         "ranges\" viewBox=\"0 0 1100 110\">";
+    auto scale = 1000.0L / static_cast<long double>(std::max<std::uint64_t>(1, r.source_size));
+    for (const auto &e : r.entries)
+        if (e.end >= e.local && e.end <= r.source_size)
+            o << "<rect x=\"" << 50 + e.local * scale << "\" y=\"30\" width=\""
+              << std::max(1.0L, (e.end - e.local) * scale) << "\" height=\"24\" fill=\"#55e0b6\"/>";
+    for (const auto &g : r.gaps)
+        o << "<rect x=\"" << 50 + g.begin * scale << "\" y=\"68\" width=\""
+          << std::max(1.0L, (g.end - g.begin) * scale) << "\" height=\"16\" fill=\"#f7ba69\"/>";
+    o << "</svg></div><h2>Verified entry evidence</h2><div "
+         "class=\"scroll\"><table><tr><th>Entry</th><th>Name identity</th><th>Local → "
+         "end</th><th>Decoded bytes</th><th>Integrity</th></tr>";
+    for (std::size_t i = 0; i < r.entries.size(); i++) {
+        const auto &e = r.entries[i];
+        o << "<tr><td>#" << i + 1 << "</td><td><code>"
+          << (show && utf8(e.name) ? escape(e.name) : identity(e.name)) << "</code></td><td>"
+          << e.local << " → " << e.end << "</td><td>" << e.size << "</td><td>"
+          << (e.verified ? "Verified" : "Unverified") << "</td></tr>";
+    }
+    o << "</table></div><h2>Policy observations</h2>";
+    for (const auto &f : r.findings)
+        o << "<p>#" << f.entry << " / " << escape(f.severity) << " / " << escape(f.code) << "</p>";
+    o << "<details><summary>Structured evidence</summary><pre>" << escape(json(r, show))
+      << "</pre></details><footer>Developer preview. Conclusions apply to the documented ZIP "
+         "profile, not every extractor or destination filesystem. Hashes, sizes and structure can "
+         "identify data. Source SHA-256: <code>"
+      << r.sha256 << "</code></footer></main></html>\n";
+    return o.str();
+}
+std::string sarif(const Report &r, bool show) {
+    J results = J::array(), rules = J::array();
+    std::set<std::string> seen;
+    for (const auto &f : r.findings) {
+        if (seen.insert(f.code).second)
+            rules.push_back(J{{"id", f.code}, {"shortDescription", J{{"text", f.code}}}});
+        J properties{{"entry", f.entry}};
+        if (show && f.entry > 0 && f.entry <= r.entries.size())
+            properties["nameEvidence"] = name_evidence(r.entries[f.entry - 1].name, true);
+        results.push_back(
+            J{{"ruleId", f.code},
+              {"level", f.severity == "error" ? "error" : "warning"},
+              {"message", J{{"text", f.code + "; entry " + std::to_string(f.entry) +
+                                         ". Review the documented portable ZIP profile."}}},
+              {"properties", properties}});
+    }
+    J invocation{{"executionSuccessful", r.complete}};
+    if (!r.complete)
+        invocation["toolExecutionNotifications"] = J::array({J{
+            {"level", "error"}, {"message", J{{"text", "Analysis incomplete: " + r.stop_code}}}}});
+    J run{{"tool", J{{"driver", J{{"name", "Rudy ZipScope"},
+                                  {"version", version()},
+                                  {"informationUri", "https://github.com/r4venrudy/rudy-zipscope"},
+                                  {"rules", rules}}}}},
+          {"invocations", J::array({invocation})},
+          {"results", results},
+          {"properties",
+           J{{"sourceSha256", r.sha256}, {"complete", r.complete}, {"profile", "zipscope.v1"}}}};
+    return J{{"$schema", "https://json.schemastore.org/sarif-2.1.0.json"},
+             {"version", "2.1.0"},
+             {"runs", J::array({run})}}
+               .dump(2, ' ', false, J::error_handler_t::replace) +
+           "\n";
+}
+std::string json(const Comparison &c, bool show) {
+    J changes = J::array();
+    for (const auto &d : c.differences)
+        changes.push_back(J{{"name", name_evidence(d.name, show)},
+                            {"change", d.change},
+                            {"beforeProjection", d.before.empty() ? J(nullptr) : J(d.before)},
+                            {"afterProjection", d.after.empty() ? J(nullptr) : J(d.after)}});
+    return J{{"schema", "zipscope.compare.v1"},
+             {"version", version()},
+             {"comparable", c.comparable},
+             {"manifestEqual", c.comparable ? J(c.equal) : J(nullptr)},
+             {"beforeSourceSha256", c.before},
+             {"afterSourceSha256", c.after},
+             {"differences", changes}}
+               .dump(2, ' ', false, J::error_handler_t::replace) +
+           "\n";
+}
+} // namespace zs
