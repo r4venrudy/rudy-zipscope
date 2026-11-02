@@ -3,6 +3,7 @@
 #include "zipscope/names.hpp"
 #include "nlohmann/json.hpp"
 #include <sstream>
+#include <set>
 namespace zs {
 using J=nlohmann::ordered_json;
 static std::string identity(const std::string&s){return sha256(Bytes(reinterpret_cast<const std::uint8_t*>(s.data()),s.size()));}
@@ -27,5 +28,12 @@ std::string html(const Report&r,bool show){
  for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.entries[i];o<<"<tr><td>#"<<i+1<<"</td><td><code>"<<(show&&utf8(e.name)?escape(e.name):identity(e.name))<<"</code></td><td>"<<e.local<<" → "<<e.end<<"</td><td>"<<e.size<<"</td><td>"<<(e.verified?"Verified":"Unverified")<<"</td></tr>";}
  o<<"</table></div><h2>Policy observations</h2>";for(const auto&f:r.findings)o<<"<p>#"<<f.entry<<" / "<<escape(f.severity)<<" / "<<escape(f.code)<<"</p>";
  o<<"<details><summary>Structured evidence</summary><pre>"<<escape(json(r,show))<<"</pre></details><footer>Developer preview. Conclusions apply to the documented ZIP profile, not every extractor or destination filesystem. Hashes, sizes and structure can identify data. Source SHA-256: <code>"<<r.sha256<<"</code></footer></main></html>\n";return o.str();
+}
+std::string sarif(const Report&r,bool show){
+ J results=J::array(),rules=J::array();std::set<std::string> seen;
+ for(const auto&f:r.findings){if(seen.insert(f.code).second)rules.push_back(J{{"id",f.code},{"shortDescription",J{{"text",f.code}}}});J properties{{"entry",f.entry}};if(show&&f.entry>0&&f.entry<=r.entries.size())properties["nameEvidence"]=name_evidence(r.entries[f.entry-1].name,true);results.push_back(J{{"ruleId",f.code},{"level",f.severity=="error"?"error":"warning"},{"message",J{{"text",f.code+"; entry "+std::to_string(f.entry)+". Review the documented portable ZIP profile."}}},{"properties",properties}});}
+ J invocation{{"executionSuccessful",r.complete}};if(!r.complete)invocation["toolExecutionNotifications"]=J::array({J{{"level","error"},{"message",J{{"text","Analysis incomplete: "+r.stop_code}}}}});
+ J run{{"tool",J{{"driver",J{{"name","Rudy ZipScope"},{"version",version()},{"informationUri","https://github.com/r4venrudy/rudy-zipscope"},{"rules",rules}}}}},{"invocations",J::array({invocation})},{"results",results},{"properties",J{{"sourceSha256",r.sha256},{"complete",r.complete},{"profile","zipscope.v1"}}}};
+ return J{{"$schema","https://json.schemastore.org/sarif-2.1.0.json"},{"version","2.1.0"},{"runs",J::array({run})}}.dump(2,' ',false,J::error_handler_t::replace)+"\n";
 }
 }
