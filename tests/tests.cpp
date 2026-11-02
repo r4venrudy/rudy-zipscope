@@ -4,6 +4,7 @@
 #include "zipscope/parser.hpp"
 #include "fixture.hpp"
 #include "zipscope/extra.hpp"
+#include "zipscope/content.hpp"
 #include <iostream>
 #include <cstdlib>
 static int checks=0;
@@ -20,4 +21,5 @@ TEST(data_descriptors){for(bool sign:{false,true})for(bool wide:{false,true}){au
 TEST(two_views){auto b=zip();auto good=zs::analyze(b);check(good.complete&&good.findings.empty(),"coherent ZIP views");b[30]='X';auto r=zs::analyze(b);check(r.complete&&r.findings.size()==1&&r.findings[0].code=="NAME_DISAGREEMENT","both raw filename views preserved");check(r.entries[0].name=="safe.txt"&&r.entries[0].local_name=="Xafe.txt","no filename normalization before reconciliation");}
 TEST(record_ranges){auto b=zip();set32(b,41+20,8);set32(b,18,8);auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="RECORD_OVERLAP","data cannot overlap directory");b=zip();b.insert(b.begin(),4,0x41);set32(b,45+42,4);set32(b,b.size()-6,45);r=zs::analyze(b);check(r.complete&&r.gaps.size()==1&&r.gaps[0].begin==0&&r.gaps[0].end==4,"prefix gap identified and hashed");}
 TEST(unsupported_contract){auto b=zip();set16(b,6,0x801);set16(b,41+8,0x801);auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="UNSUPPORTED_FLAGS","encrypted input cannot look clear");b=zip();set16(b,8,99);set16(b,41+10,99);r=zs::analyze(b);check(!r.complete&&r.stop_code=="UNSUPPORTED_METHOD","unsupported compression cannot look clear");}
+TEST(raw_inflate){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];e.method=8;e.data=0;e.compressed=5;V raw{0x4b,0x4c,0x4a,0x06,0};std::uint64_t total=0;zs::payload(raw,e,{},total);check(e.verified&&e.prefix=="abc"&&total==3,"raw DEFLATE decoded without extraction");raw.push_back(0);e.compressed=6;check(rejects([&]{zs::payload(raw,e,{},total);},"DEFLATE_TRAILING_BYTES"),"no compressed trailing data");}
 int main(){check(zs::version()=="0.1.0-preview","version");std::vector<std::uint8_t> b{0x12,0x34,0x56,0x78};check(zs::u32(b,0)==0x78563412,"little endian");bool rejected=false;try{zs::slice(b,UINT64_MAX,2);}catch(const zs::Error&){rejected=true;}check(rejected,"overflow-safe bounds");check(zs::sha256({})=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","SHA empty");std::vector<std::uint8_t> abc{'a','b','c'};check(zs::sha256(abc)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA abc");std::cout<<"ZipScope core checks passed: "<<checks<<'\n';}
