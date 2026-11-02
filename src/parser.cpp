@@ -22,4 +22,19 @@ Directory directory(Bytes b){
  if(d.start>d.end||d.size>d.end-d.start)throw Error("DIRECTORY_RANGE",d.start);
  return d;
 }
+std::vector<Entry> central(Bytes b,const Directory&d,const Limits&limits){
+ if(d.count>limits.entries)throw Error("ENTRY_LIMIT",d.start);
+ auto end=d.start+d.size,p=d.start;std::vector<Entry> out;
+ for(std::uint64_t i=0;i<d.count;i++){
+  slice(b,p,46);if(p>end||46>end-p||u32(b,p)!=0x02014b50)throw Error("CENTRAL_HEADER",p);
+  Entry e;e.made_by=u16(b,p+4);e.needed=u16(b,p+6);e.flags=u16(b,p+8);e.method=u16(b,p+10);e.crc=u32(b,p+16);e.compressed=u32(b,p+20);e.size=u32(b,p+24);e.attrs=u32(b,p+38);e.local=u32(b,p+42);
+  auto n=u16(b,p+28),x=u16(b,p+30),c=u16(b,p+32);auto tail=static_cast<std::uint64_t>(n)+x+c;
+  if(n==0||n>4096||tail>end-p-46)throw Error("CENTRAL_FIELDS",p);
+  if(u16(b,p+34))throw Error("MULTI_DISK",p);
+  e.name=raw(slice(b,p+46,n));auto extra=slice(b,p+46+n,x);e.extra.assign(extra.begin(),extra.end());
+  out.push_back(std::move(e));p+=46+tail;
+ }
+ if(p!=end)throw Error("CENTRAL_SIZE_DISAGREEMENT",p);
+ return out;
+}
 }
