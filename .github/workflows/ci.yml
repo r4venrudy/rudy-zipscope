@@ -1,0 +1,50 @@
+name: Build and verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            sanitize: 'OFF'
+          - os: windows-2022
+            sanitize: 'OFF'
+          - os: macos-15
+            sanitize: 'OFF'
+          - os: ubuntu-24.04
+            sanitize: 'ON'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - name: Configure instrumented build
+        if: matrix.sanitize == 'ON'
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DZIPSCOPE_SANITIZE=ON -DZIPSCOPE_REQUIRE_CLI_TESTS=ON
+      - name: Configure native build
+        if: matrix.sanitize == 'OFF'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DZIPSCOPE_REQUIRE_CLI_TESTS=ON
+      - run: cmake --build build --config Release --parallel 2
+      - name: Native, independent binary and installed-command suites
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build -C Release --output-on-failure
