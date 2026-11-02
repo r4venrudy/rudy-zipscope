@@ -3,6 +3,7 @@
 #include <sstream>
 #include <set>
 #include <tuple>
+#include <map>
 namespace zs {
 bool utf8(const std::string&s){
  std::size_t p=0;while(p<s.size()){
@@ -25,6 +26,8 @@ void names(Report&r){for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.
  std::istringstream windows(path);while(std::getline(windows,part,'/')){if(part.empty())continue;auto stem=part.substr(0,part.find('.'));for(auto&c:stem)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');if(devices.contains(stem))r.findings.push_back({"WINDOWS_DEVICE",i+1,"error"});if(part.back()=='.'||part.back()==' ')r.findings.push_back({"WINDOWS_TRAILING_CHARACTER",i+1,"warning"});if(part.find_first_of("<>\"|?*")!=std::string::npos)r.findings.push_back({"WINDOWS_INVALID_CHARACTER",i+1,"warning"});}
  if(std::any_of(name->begin(),name->end(),[](char c){return static_cast<unsigned char>(c)>=128;}))r.findings.push_back({"UNICODE_PORTABILITY_UNMODELED",i+1,"warning"});
 }}
+ std::map<std::string,std::size_t> projected;
+ for(std::size_t i=0;i<r.entries.size();i++)for(const auto* name:{&r.entries[i].name,&r.entries[i].local_name}){auto key=normalized(*name);for(auto&c:key)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');auto [at,inserted]=projected.emplace(key,i);if(!inserted&&at->second!=i){r.findings.push_back({"PATH_COLLISION",i+1,"error"});r.findings.push_back({"PATH_COLLISION",at->second+1,"error"});}}
  std::sort(r.findings.begin(),r.findings.end(),[](const auto&a,const auto&b){return std::tie(a.entry,a.code,a.severity)<std::tie(b.entry,b.code,b.severity);});r.findings.erase(std::unique(r.findings.begin(),r.findings.end(),[](const auto&a,const auto&b){return a.entry==b.entry&&a.code==b.code&&a.severity==b.severity;}),r.findings.end());
 }
 std::string normalized(std::string name){std::replace(name.begin(),name.end(),'\\','/');std::istringstream stream(name);std::string part,out;while(std::getline(stream,part,'/')){if(part.empty()||part==".")continue;if(!out.empty())out+='/';out+=part;}return out;}
