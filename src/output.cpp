@@ -1,6 +1,7 @@
 #include "zipscope/output.hpp"
 #include "zipscope/hash.hpp"
 #include "zipscope/names.hpp"
+#include "zipscope/compare.hpp"
 #include "nlohmann/json.hpp"
 #include <sstream>
 #include <set>
@@ -36,4 +37,5 @@ std::string sarif(const Report&r,bool show){
  J run{{"tool",J{{"driver",J{{"name","Rudy ZipScope"},{"version",version()},{"informationUri","https://github.com/r4venrudy/rudy-zipscope"},{"rules",rules}}}}},{"invocations",J::array({invocation})},{"results",results},{"properties",J{{"sourceSha256",r.sha256},{"complete",r.complete},{"profile","zipscope.v1"}}}};
  return J{{"$schema","https://json.schemastore.org/sarif-2.1.0.json"},{"version","2.1.0"},{"runs",J::array({run})}}.dump(2,' ',false,J::error_handler_t::replace)+"\n";
 }
+std::string json(const Comparison&c,bool show){J changes=J::array();for(const auto&d:c.differences)changes.push_back(J{{"name",name_evidence(d.name,show)},{"change",d.change},{"beforeProjection",d.before.empty()?J(nullptr):J(d.before)},{"afterProjection",d.after.empty()?J(nullptr):J(d.after)}});return J{{"schema","zipscope.compare.v1"},{"version",version()},{"comparable",c.comparable},{"manifestEqual",c.comparable?J(c.equal):J(nullptr)},{"beforeSourceSha256",c.before},{"afterSourceSha256",c.after},{"differences",changes}}.dump(2,' ',false,J::error_handler_t::replace)+"\n";}
 }

@@ -7,6 +7,7 @@
 #include "zipscope/content.hpp"
 #include "zipscope/names.hpp"
 #include "zipscope/output.hpp"
+#include "zipscope/compare.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <algorithm>
@@ -39,4 +40,5 @@ TEST(json_evidence){auto r=zs::analyze(zip("private-canary.txt"));check(zs::json
 TEST(text_evidence){auto r=zs::analyze(zip());check(zs::text(r).find("verified=yes")!=std::string::npos,"terminal verification");auto bad=zs::analyze(zip("../bad"));check(zs::text(bad).find("PARENT_TRAVERSAL")!=std::string::npos,"terminal policy evidence");}
 TEST(html_evidence){auto r=zs::analyze(zip("<img>.txt"));auto h=zs::html(r,true);check(h.find("&lt;img&gt;")!=std::string::npos&&h.find("<script")==std::string::npos,"escaped static HTML");check(h.find("<svg")!=std::string::npos&&h.find("Content-Security-Policy")!=std::string::npos,"local layout and CSP");}
 TEST(sarif_evidence){auto r=zs::analyze(zip("../bad"));check(zs::sarif(r).find("PARENT_TRAVERSAL")!=std::string::npos,"SARIF rule evidence");r=zs::analyze({});check(zs::sarif(r).find("\"executionSuccessful\": false")!=std::string::npos,"incomplete SARIF execution explicit");}
+TEST(manifest_comparison){auto a=zs::analyze(zip());auto b=a;b.entries[0].method=8;check(zs::compare(a,b).equal,"compression excluded from decoded manifest");b.entries[0].attrs^=0x10000;auto c=zs::compare(a,b);check(c.comparable&&!c.equal&&c.differences[0].change=="modified","mode changes are visible");b.complete=false;c=zs::compare(a,b);check(!c.comparable&&zs::json(c).find("\"manifestEqual\": null")!=std::string::npos,"incomplete archive cannot pass comparison");}
 int main(){check(zs::version()=="0.1.0-preview","version");std::vector<std::uint8_t> b{0x12,0x34,0x56,0x78};check(zs::u32(b,0)==0x78563412,"little endian");bool rejected=false;try{zs::slice(b,UINT64_MAX,2);}catch(const zs::Error&){rejected=true;}check(rejected,"overflow-safe bounds");check(zs::sha256({})=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","SHA empty");std::vector<std::uint8_t> abc{'a','b','c'};check(zs::sha256(abc)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA abc");std::cout<<"ZipScope core checks passed: "<<checks<<'\n';}
