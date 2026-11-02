@@ -8,7 +8,8 @@ namespace zs {
 void payload(Bytes b,Entry&e,const Limits&limits,std::uint64_t& total){
  if(e.size>limits.entry||total>limits.total||e.size>limits.total-total)throw Error("EXPANSION_LIMIT",e.data);
  auto input=slice(b,e.data,e.compressed);Sha256 hash;std::uint64_t produced=0;uLong crc=crc32(0,nullptr,0);
- auto accept=[&](Bytes bytes){if(produced>e.size||bytes.size()>e.size-produced)throw Error("SIZE_MISMATCH",e.data);produced+=bytes.size();hash.update(bytes);crc=crc32(crc,bytes.data(),static_cast<uInt>(bytes.size()));if(e.prefix.size()<4096){auto count=std::min(bytes.size(),4096-e.prefix.size());e.prefix+=raw(bytes.first(count));}};
+ auto host=e.made_by>>8;bool link=(host==3||host==19)&&((e.attrs>>16)&0170000U)==0120000U;
+ auto accept=[&](Bytes bytes){if(produced>e.size||bytes.size()>e.size-produced)throw Error("SIZE_MISMATCH",e.data);produced+=bytes.size();hash.update(bytes);crc=crc32(crc,bytes.data(),static_cast<uInt>(bytes.size()));if(link&&e.prefix.size()<4096){auto count=std::min(bytes.size(),4096-e.prefix.size());e.prefix+=raw(bytes.first(count));}};
  if(e.method==0){if(e.compressed!=e.size)throw Error("STORED_SIZE",e.data);accept(input);}
  else if(e.method==8){
   z_stream stream{};if(inflateInit2(&stream,-15)!=Z_OK)throw Error("INFLATE_INIT",e.data);
