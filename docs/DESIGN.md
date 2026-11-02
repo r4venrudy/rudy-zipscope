@@ -1,0 +1,13 @@
+# Architecture and qualified evidence
+
+The core is authored C++20, with bundled zlib C for raw DEFLATE/CRC-32 and nlohmann/json for serialization. Configuration/build/run never fetches dependencies. Binary-field access uses subtraction-based ranges to prevent offset/length wraparound. Format errors carry static codes and detection offsets, not copied payload strings.
+
+`directory` resolves one end view; `central` materializes bounded entry metadata; `local` and `descriptor` reconcile the referenced records. Interval checks run before content verification. `payload` streams supported decoded bytes into CRC and SHA, checking both advertised and actual expansion. `names` audits raw/alternative views and attributes, then records deduplicated conservative destination observations. The outer `analyze` returns partial evidence and the first stop decision instead of resynchronizing arbitrary bytes.
+
+`complete` means the supported profile finished, not that the archive is safe. A completed archive may contain policy findings. A malformed or unsupported entry stops completion; each individual `verified` flag remains explicit. Manifest comparison requires complete verified inputs and no error-level namespace findings. It keys by exact central-name bytes and compares decoded SHA-256, decoded size, external attributes and creator host. Compression, timestamps, comments and unrelated extra metadata are excluded. Original source identities distinguish those representations.
+
+The file layer takes a bounded copy and rechecks the same opened stream after investigation. The report layer never opens archive member paths. Exclusive output uses native `CREATE_NEW` on Windows and `O_EXCL`/`0600` on POSIX. HTML is static, escapes dynamic text and has a restrictive CSP; SARIF marks incomplete execution explicitly. Neither layer performs network access, extraction, link following or input-directed subprocess execution.
+
+Core parsing is linear in supported source/content bytes plus metadata maps and namespace work. Inflation is subject to decoded-byte budgets; no advertised-size allocation is used for payloads. The implementation does not promise a fixed process RSS or wall-clock deadline. Report materialization is bounded at emission but can require temporary working memory. Use controlled invocations rather than treating this preview as an untrusted multi-tenant sandbox.
+
+SHA-256 implementation checks include empty/abc/million-byte standard vectors and independent `hashlib` comparisons. CRC and decompression use unmodified pinned zlib. Evidence hashes do not provide signing-key trust, malware classification or exploitability conclusions.

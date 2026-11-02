@@ -1,0 +1,11 @@
+# Validation scope
+
+The initial native suite passed **2,539 checks before the final namespace-budget regression**. It covers header bounds, ZIP64 end/local extra fields, all four descriptor layouts, view disagreement, interval overlaps/gaps, unsupported flags/methods, raw DEFLATE boundaries, CRC/decoded identities, Unicode/name rules, link graphs, qualified comparisons and file-preserving output. Every truncation of a representative archive is checked; **2,048 fixed-seed byte mutations** must yield bounded evidence rather than a false verified entry. SHA standard vectors include one million `a` bytes. A separate regression exercises the namespace work ceiling and deduplicated findings.
+
+The independent Python `zipfile`/`hashlib` oracle passes **6,490 conditions** over the invented corpus and **384 generated archives**. It checks decoded bytes/hashes, source/name identities, exact local offsets, method, attributes and expected profile findings/stops. Generated forms include stored, raw-DEFLATE, streaming and local ZIP64 entries. This is independent implementation evidence, not exhaustive format coverage or proof about every extractor.
+
+The installed-command suite passes **64 checks on Windows** (65 on POSIX due to the private-mode assertion). It verifies version/help, privacy defaults, explicit names, recompression equality, content/addition differences, unavailable comparisons, budget gates, Unicode/space paths, HTML escaping/CSP, SARIF execution status, option errors, original file preservation and the absence of extracted side files.
+
+CI builds Windows/MSVC, Linux/GCC, macOS/Clang and Linux/Clang ASan+UBSan configurations. Sanitizer flags include bundled inflation code. Release jobs repeat validation, build/install native commands on their respective hosts, run the installed-command suite and assemble controlled fixtures/reports before publication. Actual workflow and downloaded-package receipts establish publication status; this static file does not substitute for those receipts.
+
+Benchmark timings are measured observations with process startup included, not portable speed claims. See [methodology](../benchmarks/README.md). Limitations include incomplete legacy encoding/metadata coverage, conservative path warnings, no full Unicode filesystem semantics, no nested-archive recursion and no extraction-side testing.

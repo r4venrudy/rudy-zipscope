@@ -447,6 +447,20 @@ TEST(unicode_alternative_contract) {
     check(r.entries[0].aliases.size() == 1,
           "UTF-8 override interpreted independently of legacy flag");
 }
+TEST(namespace_budget_contract) {
+    zs::Report r;
+    zs::Entry entry;
+    for (unsigned i = 0; i < 2040; ++i)
+        entry.name += "x/";
+    entry.name += "file";
+    entry.local_name = entry.name;
+    entry.flags = 0x800;
+    r.entries.assign(300, entry);
+    check(rejects([&] { zs::names(r); }, "NAMESPACE_WORK_LIMIT"),
+          "path-component work is explicitly bounded");
+    check(r.findings.size() <= r.entries.size() * 20,
+          "duplicate observations cannot amplify memory before deduplication");
+}
 int main() {
     check(zs::version() == "0.1.0-preview", "version");
     std::vector<std::uint8_t> b{0x12, 0x34, 0x56, 0x78};
