@@ -1,5 +1,6 @@
 #include "zipscope/parser.hpp"
 #include "zipscope/bytes.hpp"
+#include "zipscope/extra.hpp"
 #include <algorithm>
 namespace zs {
 Directory directory(Bytes b){
@@ -32,7 +33,7 @@ std::vector<Entry> central(Bytes b,const Directory&d,const Limits&limits){
   if(n==0||n>4096||tail>end-p-46)throw Error("CENTRAL_FIELDS",p);
   if(u16(b,p+34))throw Error("MULTI_DISK",p);
   e.name=raw(slice(b,p+46,n));auto extra=slice(b,p+46+n,x);e.extra.assign(extra.begin(),extra.end());
-  out.push_back(std::move(e));p+=46+tail;
+  zip64_values(e);out.push_back(std::move(e));p+=46+tail;
  }
  if(p!=end)throw Error("CENTRAL_SIZE_DISAGREEMENT",p);
  return out;
