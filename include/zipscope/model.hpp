@@ -13,6 +13,7 @@ struct Entry {
  std::string name,local_name,sha256,prefix;std::uint16_t method=0,flags=0,made_by=0,needed=0;std::uint32_t crc=0,attrs=0;
  std::uint64_t compressed=0,size=0,local=0,data=0,end=0;bool verified=false,directory=false,symlink=false;
  std::vector<std::uint8_t> extra,local_extra;
+ std::vector<std::string> aliases;
 };
 struct Directory {std::uint64_t start=0,size=0,count=0,end=0,eocd=0;bool zip64=false;};
 struct Gap {std::uint64_t begin,end;std::string sha256;};

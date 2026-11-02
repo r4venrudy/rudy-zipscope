@@ -4,6 +4,8 @@
 #include <set>
 #include <tuple>
 #include <map>
+#include "zipscope/extra.hpp"
+#include "zlib/zlib.h"
 namespace zs {
 bool utf8(const std::string&s){
  std::size_t p=0;while(p<s.size()){
@@ -15,7 +17,8 @@ bool utf8(const std::string&s){
  }
  return true;
 }
-void names(Report&r){for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.entries[i];for(const auto* name:{&e.name,&e.local_name}){
+void names(Report&r){for(std::size_t i=0;i<r.entries.size();i++){auto&e=r.entries[i];for(bool local:{false,true}){auto fields=extras(local?Bytes(e.local_extra):Bytes(e.extra));if(fields.contains(8))throw Error("EXTENDED_LANGUAGE_ENCODING",e.local);if(!fields.contains(0x7075))continue;auto field=fields.at(0x7075);const auto&original=local?e.local_name:e.name;if(field.size()<5||field[0]!=1||u32(field,1)!=static_cast<std::uint32_t>(crc32(0,reinterpret_cast<const Bytef*>(original.data()),static_cast<uInt>(original.size())))){r.findings.push_back({"UNICODE_EXTRA_INVALID",i+1,"warning"});continue;}auto alias=raw(field.subspan(5));if(!utf8(alias)||alias.empty())throw Error("UNICODE_EXTRA_ENCODING",e.local);if(alias!=original)r.findings.push_back({"UNICODE_NAME_DISAGREEMENT",i+1,"error"});e.aliases.push_back(std::move(alias));}
+ std::vector<const std::string*> views{&e.name,&e.local_name};for(const auto&alias:e.aliases)views.push_back(&alias);for(const auto* name:views){
  if(!utf8(*name))throw Error("INVALID_NAME_ENCODING",e.local);if(!(e.flags&0x800))for(char c:*name)if(static_cast<unsigned char>(c)>=128)throw Error("LEGACY_NAME_ENCODING",e.local);
  auto path=*name;std::replace(path.begin(),path.end(),'\\','/');
  if(path.starts_with('/'))r.findings.push_back({"ABSOLUTE_PATH",i+1,"error"});
@@ -27,7 +30,7 @@ void names(Report&r){for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.
  if(std::any_of(name->begin(),name->end(),[](char c){return static_cast<unsigned char>(c)>=128;}))r.findings.push_back({"UNICODE_PORTABILITY_UNMODELED",i+1,"warning"});
 }}
  std::map<std::string,std::size_t> projected;
- for(std::size_t i=0;i<r.entries.size();i++)for(const auto* name:{&r.entries[i].name,&r.entries[i].local_name}){auto key=normalized(*name);for(auto&c:key)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');auto [at,inserted]=projected.emplace(key,i);if(!inserted&&at->second!=i){r.findings.push_back({"PATH_COLLISION",i+1,"error"});r.findings.push_back({"PATH_COLLISION",at->second+1,"error"});}}
+ for(std::size_t i=0;i<r.entries.size();i++){std::vector<const std::string*> views{&r.entries[i].name,&r.entries[i].local_name};for(const auto&alias:r.entries[i].aliases)views.push_back(&alias);for(const auto* name:views){auto key=normalized(*name);for(auto&c:key)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');auto [at,inserted]=projected.emplace(key,i);if(!inserted&&at->second!=i){r.findings.push_back({"PATH_COLLISION",i+1,"error"});r.findings.push_back({"PATH_COLLISION",at->second+1,"error"});}}}
  for(std::size_t i=0;i<r.entries.size();i++){auto&e=r.entries[i];auto host=e.made_by>>8;auto mode=(host==3||host==19)?(e.attrs>>16)&0170000U:0U;e.directory=e.name.ends_with('/')||mode==0040000U||(e.attrs&0x10);e.symlink=mode==0120000U;if(mode!=0&&mode!=0040000U&&mode!=0100000U&&mode!=0120000U)r.findings.push_back({"SPECIAL_FILE",i+1,"error"});if((e.name.ends_with('/')&&mode==0100000U)||(e.directory&&e.size!=0))r.findings.push_back({"TYPE_DISAGREEMENT",i+1,"error"});}
  for(const auto&[path,index]:projected){for(auto pos=path.find('/');pos!=std::string::npos;pos=path.find('/',pos+1)){auto it=projected.find(path.substr(0,pos));if(it!=projected.end()&&!r.entries[it->second].directory)r.findings.push_back({"FILE_DIRECTORY_CONFLICT",index+1,"error"});}}
  std::map<std::string,std::string> links;
