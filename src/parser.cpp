@@ -69,7 +69,7 @@ void descriptor(Bytes b,Entry&e){
  e.end=matches[0];
 }
 Report analyze(Bytes b,const Limits&limits){
- Report r;
+ Report r;r.source_size=b.size();
  try{
   if(limits.input==0||limits.input>1024ULL*1024*1024||limits.total>2048ULL*1024*1024||limits.entry>1024ULL*1024*1024||limits.entries==0||limits.entries>100000)throw Error("INVALID_LIMITS",0);
   if(b.size()>limits.input)throw Error("INPUT_LIMIT",0);

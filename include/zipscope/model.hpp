@@ -17,6 +17,6 @@ struct Entry {
 };
 struct Directory {std::uint64_t start=0,size=0,count=0,end=0,eocd=0;bool zip64=false;};
 struct Gap {std::uint64_t begin,end;std::string sha256;};
-struct Report {bool complete=false;std::string sha256,stop_code;std::uint64_t stop_offset=0;Directory directory;std::vector<Entry> entries;std::vector<Finding> findings;std::vector<Gap> gaps;};
+struct Report {bool complete=false;std::string sha256,stop_code;std::uint64_t stop_offset=0,source_size=0;Directory directory;std::vector<Entry> entries;std::vector<Finding> findings;std::vector<Gap> gaps;};
 std::string version();
 }
