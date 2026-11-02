@@ -3,6 +3,7 @@
 #include "zipscope/extra.hpp"
 #include "zipscope/hash.hpp"
 #include "zipscope/content.hpp"
+#include "zipscope/names.hpp"
 #include <algorithm>
 namespace zs {
 Directory directory(Bytes b){
@@ -83,6 +84,7 @@ Report analyze(Bytes b,const Limits&limits){
   if(!r.gaps.empty())r.findings.push_back({"UNREFERENCED_BYTES",0,"warning"});
   for(auto&e:r.entries){if(e.flags&static_cast<std::uint16_t>(~0x080eU))throw Error("UNSUPPORTED_FLAGS",e.local);if(e.method!=0&&e.method!=8)throw Error("UNSUPPORTED_METHOD",e.local);if(e.method==0&&(e.flags&6))throw Error("STORED_COMPRESSION_FLAGS",e.local);if(e.needed>45)throw Error("UNSUPPORTED_VERSION",e.local);if(extras(e.extra).contains(0x9901))throw Error("ENCRYPTION_EXTRA",e.local);}
   std::uint64_t total=0;for(std::size_t i=0;i<r.entries.size();i++){auto&e=r.entries[i];payload(b,e,limits,total);if(e.size>1024*1024&&e.compressed<e.size/1000)r.findings.push_back({"HIGH_EXPANSION_RATIO",i+1,"warning"});}
+  names(r);
   r.complete=true;
  }catch(const Error&e){r.stop_code=e.code;r.stop_offset=e.offset;}
  return r;

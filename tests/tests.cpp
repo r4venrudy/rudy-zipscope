@@ -5,6 +5,7 @@
 #include "fixture.hpp"
 #include "zipscope/extra.hpp"
 #include "zipscope/content.hpp"
+#include "zipscope/names.hpp"
 #include <iostream>
 #include <cstdlib>
 static int checks=0;
@@ -24,4 +25,5 @@ TEST(unsupported_contract){auto b=zip();set16(b,6,0x801);set16(b,41+8,0x801);aut
 TEST(raw_inflate){auto b=zip();auto e=zs::central(b,zs::directory(b),{})[0];e.method=8;e.data=0;e.compressed=5;V raw{0x4b,0x4c,0x4a,0x06,0};std::uint64_t total=0;zs::payload(raw,e,{},total);check(e.verified&&e.prefix=="abc"&&total==3,"raw DEFLATE decoded without extraction");raw.push_back(0);e.compressed=6;check(rejects([&]{zs::payload(raw,e,{},total);},"DEFLATE_TRAILING_BYTES"),"no compressed trailing data");}
 TEST(crc_integrity){auto b=zip();b[38]='x';auto r=zs::analyze(b);check(!r.complete&&r.stop_code=="CRC_MISMATCH"&&!r.entries[0].verified,"CRC mismatch cannot claim verified contents");b=zip();r=zs::analyze(b);check(r.entries[0].verified&&r.entries[0].sha256=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","payload identity independent of archive identity");}
 TEST(expansion_budgets){auto b=zip();zs::Limits l;l.entry=2;auto r=zs::analyze(b,l);check(!r.complete&&r.stop_code=="EXPANSION_LIMIT","per-entry decoded budget");l={};l.total=2;r=zs::analyze(b,l);check(!r.complete&&r.stop_code=="EXPANSION_LIMIT","total decoded budget");l={};l.input=1;r=zs::analyze(b,l);check(!r.complete&&r.sha256.empty()&&r.stop_code=="INPUT_LIMIT","input bounded before hashing");}
+TEST(unicode_names){check(zs::utf8("caf\xc3\xa9.txt"),"valid UTF-8");for(auto s:{std::string("\xc0\x80"),std::string("\xed\xa0\x80"),std::string("\xf4\x90\x80\x80"),std::string("bad\0name",8)})check(!zs::utf8(s),"invalid or controlled Unicode");}
 int main(){check(zs::version()=="0.1.0-preview","version");std::vector<std::uint8_t> b{0x12,0x34,0x56,0x78};check(zs::u32(b,0)==0x78563412,"little endian");bool rejected=false;try{zs::slice(b,UINT64_MAX,2);}catch(const zs::Error&){rejected=true;}check(rejected,"overflow-safe bounds");check(zs::sha256({})=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","SHA empty");std::vector<std::uint8_t> abc{'a','b','c'};check(zs::sha256(abc)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA abc");std::cout<<"ZipScope core checks passed: "<<checks<<'\n';}
