@@ -8,6 +8,7 @@
 #include "zipscope/names.hpp"
 #include <iostream>
 #include <cstdlib>
+#include <algorithm>
 static int checks=0;
 static void check(bool ok,const char* what){++checks;if(!ok){std::cerr<<what<<'\n';std::exit(1);}}
 struct AutoTest{explicit AutoTest(void(*fn)()){fn();}};
@@ -30,4 +31,5 @@ TEST(path_projection){check(zs::normalized("./folder//file")=="folder/file","dot
 TEST(escape_paths){for(auto name:{"../escape","/absolute","C:/drive","folder\\..\\escape","stream:name"}){auto r=zs::analyze(zip(name));check(r.complete&&!r.findings.empty(),"unsafe path flagged without extraction");}}
 TEST(windows_paths){for(auto name:{"AUX.txt","folder/COM1.log","trailing.","folder/file ","bad?.txt"}){auto r=zs::analyze(zip(name));check(r.complete&&r.findings.size()==1,"Windows portability evidence deduplicated across matching views");}}
 TEST(namespace_collisions){zs::Report r;zs::Entry a;a.flags=0x800;a.name=a.local_name="Folder/File";zs::Entry b=a;b.name=b.local_name="folder//file";r.entries={a,b};zs::names(r);check(r.findings.size()==2&&r.findings[0].code=="PATH_COLLISION","ASCII case and separator collisions show both records");}
+TEST(file_directory_conflicts){zs::Report r;zs::Entry a;a.flags=0x800;a.name=a.local_name="file";zs::Entry b=a;b.name=b.local_name="file/child";r.entries={a,b};zs::names(r);check(std::any_of(r.findings.begin(),r.findings.end(),[](const auto&f){return f.code=="FILE_DIRECTORY_CONFLICT";}),"ancestor file conflict");auto z=zip();set32(z,41+38,0x21a40000);auto out=zs::analyze(z);check(std::any_of(out.findings.begin(),out.findings.end(),[](const auto&f){return f.code=="SPECIAL_FILE";}),"Unix device entry flagged");}
 int main(){check(zs::version()=="0.1.0-preview","version");std::vector<std::uint8_t> b{0x12,0x34,0x56,0x78};check(zs::u32(b,0)==0x78563412,"little endian");bool rejected=false;try{zs::slice(b,UINT64_MAX,2);}catch(const zs::Error&){rejected=true;}check(rejected,"overflow-safe bounds");check(zs::sha256({})=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","SHA empty");std::vector<std::uint8_t> abc{'a','b','c'};check(zs::sha256(abc)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA abc");std::cout<<"ZipScope core checks passed: "<<checks<<'\n';}
