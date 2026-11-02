@@ -20,8 +20,8 @@ void payload(Bytes b,Entry&e,const Limits&limits,std::uint64_t& total){
   }
  }else throw Error("UNSUPPORTED_METHOD",e.local);
  if(produced!=e.size)throw Error("SIZE_MISMATCH",e.data);
- e.sha256=hash.finish();e.verified=true;total+=produced;
- // CRC comparison is a separate integrity decision from SHA-256 provenance.
- (void)crc;
+ e.sha256=hash.finish();
+ if(static_cast<std::uint32_t>(crc)!=e.crc)throw Error("CRC_MISMATCH",e.data);
+ e.verified=true;total+=produced;
 }
 }
