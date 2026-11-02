@@ -49,4 +49,20 @@ void local(Bytes b,Entry&e){
  if(!(e.flags&8)&&(u32(b,p+14)!=e.crc||compressed!=e.compressed||size!=e.size))throw Error("LOCAL_SIZE_OR_CRC",p);
  if((e.flags&8)&&((u32(b,p+14)!=0&&u32(b,p+14)!=e.crc)||(compressed!=0&&compressed!=e.compressed)||(size!=0&&size!=e.size)))throw Error("DESCRIPTOR_PLACEHOLDER",p);
 }
+void descriptor(Bytes b,Entry&e){
+ if(!(e.flags&8))return;
+ // Some producers use 64-bit descriptors with small ZIP64 entries. Try all
+ // bounded layouts, require exactly one complete match and preserve ambiguity.
+ std::vector<std::uint64_t> matches;
+ for(bool signature:{false,true})for(bool wide:{false,true}){
+  auto p=e.end;auto length=static_cast<std::uint64_t>((signature?4:0)+(wide?20:12));
+  if(p>b.size()||length>b.size()-p)continue;
+  if(signature){if(u32(b,p)!=0x08074b50)continue;p+=4;}
+  if(u32(b,p)!=e.crc)continue;p+=4;
+  auto compressed=wide?u64(b,p):u32(b,p);p+=wide?8:4;auto size=wide?u64(b,p):u32(b,p);
+  if(compressed==e.compressed&&size==e.size)matches.push_back(e.end+length);
+ }
+ if(matches.size()!=1)throw Error(matches.empty()?"DESCRIPTOR_MISMATCH":"DESCRIPTOR_AMBIGUOUS",e.end);
+ e.end=matches[0];
+}
 }
