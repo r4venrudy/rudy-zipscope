@@ -1,6 +1,7 @@
 #include "zipscope/parser.hpp"
 #include "zipscope/bytes.hpp"
 #include "zipscope/extra.hpp"
+#include "zipscope/hash.hpp"
 #include <algorithm>
 namespace zs {
 Directory directory(Bytes b){
@@ -64,5 +65,15 @@ void descriptor(Bytes b,Entry&e){
  }
  if(matches.size()!=1)throw Error(matches.empty()?"DESCRIPTOR_MISMATCH":"DESCRIPTOR_AMBIGUOUS",e.end);
  e.end=matches[0];
+}
+Report analyze(Bytes b,const Limits&limits){
+ Report r;r.sha256=sha256(b);
+ try{
+  if(b.size()>limits.input)throw Error("INPUT_LIMIT",0);
+  r.directory=directory(b);r.entries=central(b,r.directory,limits);
+  for(std::size_t i=0;i<r.entries.size();i++){auto&e=r.entries[i];local(b,e);descriptor(b,e);if(e.name!=e.local_name)r.findings.push_back({"NAME_DISAGREEMENT",i+1,"error"});}
+  r.complete=true;
+ }catch(const Error&e){r.stop_code=e.code;r.stop_offset=e.offset;}
+ return r;
 }
 }
