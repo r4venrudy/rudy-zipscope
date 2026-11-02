@@ -1,6 +1,8 @@
 #include "zipscope/names.hpp"
 #include <algorithm>
 #include <sstream>
+#include <set>
+#include <tuple>
 namespace zs {
 bool utf8(const std::string&s){
  std::size_t p=0;while(p<s.size()){
@@ -19,6 +21,11 @@ void names(Report&r){for(std::size_t i=0;i<r.entries.size();i++){const auto&e=r.
  std::istringstream parts(path);std::string part;while(std::getline(parts,part,'/'))if(part=="..")r.findings.push_back({"PARENT_TRAVERSAL",i+1,"error"});
  if(path.find(':')!=std::string::npos)r.findings.push_back({"DRIVE_OR_STREAM_PATH",i+1,"error"});
  if(normalized(path).empty())r.findings.push_back({"EMPTY_PATH",i+1,"error"});
-}}}
+ const std::set<std::string> devices{"con","prn","aux","nul","conin$","conout$","com1","com2","com3","com4","com5","com6","com7","com8","com9","lpt1","lpt2","lpt3","lpt4","lpt5","lpt6","lpt7","lpt8","lpt9"};
+ std::istringstream windows(path);while(std::getline(windows,part,'/')){if(part.empty())continue;auto stem=part.substr(0,part.find('.'));for(auto&c:stem)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');if(devices.contains(stem))r.findings.push_back({"WINDOWS_DEVICE",i+1,"error"});if(part.back()=='.'||part.back()==' ')r.findings.push_back({"WINDOWS_TRAILING_CHARACTER",i+1,"warning"});if(part.find_first_of("<>\"|?*")!=std::string::npos)r.findings.push_back({"WINDOWS_INVALID_CHARACTER",i+1,"warning"});}
+ if(std::any_of(name->begin(),name->end(),[](char c){return static_cast<unsigned char>(c)>=128;}))r.findings.push_back({"UNICODE_PORTABILITY_UNMODELED",i+1,"warning"});
+}}
+ std::sort(r.findings.begin(),r.findings.end(),[](const auto&a,const auto&b){return std::tie(a.entry,a.code,a.severity)<std::tie(b.entry,b.code,b.severity);});r.findings.erase(std::unique(r.findings.begin(),r.findings.end(),[](const auto&a,const auto&b){return a.entry==b.entry&&a.code==b.code&&a.severity==b.severity;}),r.findings.end());
+}
 std::string normalized(std::string name){std::replace(name.begin(),name.end(),'\\','/');std::istringstream stream(name);std::string part,out;while(std::getline(stream,part,'/')){if(part.empty()||part==".")continue;if(!out.empty())out+='/';out+=part;}return out;}
 }
